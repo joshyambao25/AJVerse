@@ -1476,7 +1476,7 @@ function momentsShell() {
       <div class="moods">${MOODS.map((m) => `<button class="mood ${S.mood === m ? 'on' : ''}" data-action="mood" data-mood="${m}">${m}</button>`).join('')}</div>
       <form data-form="post">
         <div class="composer-row">
-          <textarea name="text" rows="2" placeholder="What's on your mind? e.g. Pauwi na ako 🚌"></textarea>
+          <textarea name="text" rows="2" placeholder="What's on your mind?"></textarea>
         </div>
         <div id="postPreview">${postPreviewHtml()}</div>
         <div class="hstack" style="margin-top:10px">
@@ -1762,7 +1762,7 @@ function openTxnEditor(existing, type = 'expense') {
       <div class="label">Category</div>
       <div class="chips" id="catChips" style="margin-bottom:14px">${catChips(t, cat)}</div>
       <input type="hidden" name="category" value="${esc(cat)}">
-      <label class="field"><span>Note (optional)</span><input name="note" value="${esc(e?.note || '')}" placeholder="e.g. Jollibee lunch" autocomplete="off"></label>
+      <label class="field"><span>Note (optional)</span><input name="note" value="${esc(e?.note || '')}" placeholder="e.g. KFC Lunch" autocomplete="off"></label>
       <label class="field"><span>Date</span><input type="date" name="date" value="${dateInputValue(e?.date || new Date())}"></label>
       ${sharedSwitch(!!e?.shared, 'Counts toward your joint budget')}
       <button class="btn primary block" type="submit" style="margin-top:8px">Save</button>
@@ -1789,7 +1789,7 @@ function openGoalSheet(g) {
     <form data-form="goal" data-id="${g?.id || ''}" data-owner="${g?.ownerUid || ''}">
       <div class="chips" style="margin-bottom:14px">${pickChips('emoji', GOAL_EMOJIS.map((x) => ({ value: x, label: x, emojiOnly: true })), emoji)}</div>
       <input type="hidden" name="emoji" value="${emoji}">
-      <label class="field"><span>Goal name</span><input name="title" value="${esc(g?.title || '')}" placeholder="e.g. Baguio trip" autocomplete="off"></label>
+      <label class="field"><span>Goal name</span><input name="title" value="${esc(g?.title || '')}" placeholder="e.g. Road Trip" autocomplete="off"></label>
       ${moneyField('Target amount', 'target', amountStr(g?.target))}
       ${sharedSwitch(g ? !!g.shared : true)}
       <button class="btn primary block" type="submit" style="margin-top:8px">Save</button>
@@ -1835,7 +1835,7 @@ function openEventSheet(e, day) {
         <button type="button" class="${kind === 'todo' ? 'on' : ''}" data-action="pick" data-name="kind" data-value="todo">✅ To-do</button>
       </div>
       <input type="hidden" name="kind" value="${kind}">
-      <label class="field"><span>What</span><input name="title" value="${esc(e?.title || '')}" placeholder="e.g. Dinner with family, Pay Meralco" autocomplete="off"></label>
+      <label class="field"><span>What</span><input name="title" value="${esc(e?.title || '')}" placeholder="e.g. Dinner with friends, Pay Meralco" autocomplete="off"></label>
       <div class="label">Who is it for?</div>
       <div class="chips" style="margin-bottom:14px">
         ${pickChips('scope', [
@@ -1889,7 +1889,7 @@ function openStorySheet(photo = null) {
     <form data-form="story">
       <div id="storyPreview">${storyPreviewHtml()}</div>
       <label class="field" style="margin-top:12px"><span>${photo ? 'Caption (optional)' : 'Your message'}</span>
-        <input name="text" maxlength="140" placeholder="${photo ? 'e.g. Miss you 💙' : 'Type something sweet…'}" autocomplete="off" data-input="story-text"></label>
+        <input name="text" maxlength="140" placeholder="${photo ? 'e.g. Miss you 💙' : 'Whats on your mind?…'}" autocomplete="off" data-input="story-text"></label>
       <div class="hstack" style="margin-bottom:12px">
         <label class="btn sm" style="cursor:pointer">${icon('camera', 18)} ${photo ? 'Retake' : 'Add photo'}<input type="file" accept="image/*" capture="environment" data-change="story-photo" hidden></label>
         <label class="btn sm" style="cursor:pointer">${icon('image', 18)} Gallery<input type="file" accept="image/*" data-change="story-photo" hidden></label>
