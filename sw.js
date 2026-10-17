@@ -1,8 +1,8 @@
-// OurNest service worker — lets the app open without internet.
+// AJVerse service worker — lets the app open without internet.
 // Your own files: try the network first (so updates show up), fall back to the saved copy.
 // Libraries from CDNs: use the saved copy (their URLs include a fixed version).
 
-const CACHE = 'ournest-v2';
+const CACHE = 'ajverse-v7';
 
 const APP_FILES = [
   './',
@@ -13,6 +13,7 @@ const APP_FILES = [
   './manifest.webmanifest',
   './icons/icon-192.png',
   './icons/icon-512.png',
+  './icons/favicon-64.png',
 ];
 
 const LIBS = [
@@ -79,7 +80,7 @@ self.addEventListener('fetch', (event) => {
   // Firebase keeps its own offline copy of your data.
 });
 
-// Tapping a notification opens (or focuses) OurNest.
+// Tapping a notification opens (or focuses) AJVerse.
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
   const target = event.notification.tag === 'chat' ? './?tab=chat' : event.notification.tag?.startsWith('ev-') ? './?tab=plan' : './';

@@ -441,3 +441,94 @@ button.row:active, .row.tap:active { background: var(--card-2); }
 }
 @keyframes spin { to { transform: rotate(360deg); } }
 .or { text-align: center; color: var(--muted); margin: 6px 0 10px; }
+
+/* ---------- videos & media ---------- */
+.vthumb { position: relative; border-radius: 16px; overflow: hidden; background: #000; display: grid; place-items: center; cursor: pointer; aspect-ratio: 4 / 3; }
+.vthumb img { width: 100%; height: 100%; object-fit: cover; opacity: 0.92; }
+.vthumb .play {
+  position: absolute; width: 54px; height: 54px; border-radius: 50%; background: rgba(0, 0, 0, 0.5); color: #fff;
+  display: grid; place-items: center; font-size: 20px; padding-left: 4px; border: 2px solid rgba(255, 255, 255, 0.85);
+}
+.msg .vthumb { width: 220px; aspect-ratio: 1 / 1; }
+.thumb .thumb-play { position: absolute; inset: 0; display: grid; place-items: center; color: #fff; font-size: 22px; text-shadow: 0 1px 6px rgba(0,0,0,0.6); pointer-events: none; }
+.media-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; }
+.mcell { aspect-ratio: 1 / 1; overflow: hidden; border-radius: 10px; background: var(--card-2); }
+.mcell > img, .mcell .vthumb { width: 100%; height: 100%; object-fit: cover; aspect-ratio: auto; border-radius: 0; min-height: 0; cursor: zoom-in; }
+.mcell .vthumb .play { width: 36px; height: 36px; font-size: 14px; }
+
+/* ---------- chat extras ---------- */
+.chat-head .icon-btn { width: 38px; height: 38px; }
+.chat-bar form { gap: 4px; }
+.chat-bar .icon-btn { width: 40px; height: 40px; }
+mark { background: color-mix(in srgb, var(--warn) 45%, transparent); color: inherit; border-radius: 4px; padding: 0 2px; }
+.msg.flash .b, .msg.flash .photo, .msg.flash .vthumb { animation: flash 1.8s; }
+@keyframes flash { 0%, 100% { box-shadow: none; } 25%, 60% { box-shadow: 0 0 0 4px var(--warn); } }
+.sys { align-self: center; font-size: 12px; color: var(--muted); margin: 8px 20px; text-align: center; }
+.story-ref { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+.story-ref .sr-img, .story-ref .sr-txt { width: 44px; height: 64px; border-radius: 8px; object-fit: cover; flex: none; }
+.sr-txt { color: #fff; font-size: 8px; display: grid; place-items: center; padding: 3px; text-align: center; overflow: hidden; }
+.msg.me .story-ref { flex-direction: row-reverse; }
+
+/* ---------- story reply ---------- */
+.viewer .foot { flex-direction: column; align-items: center; }
+.viewer .reply { display: flex; gap: 6px; width: 100%; max-width: 520px; }
+.viewer .reply input { background: rgba(255, 255, 255, 0.12); border: 1px solid rgba(255, 255, 255, 0.35); color: #fff; border-radius: 22px; padding: 11px 16px; }
+.viewer .reply input::placeholder { color: rgba(255, 255, 255, 0.7); }
+.viewer .reply .icon-btn { color: #fff; }
+.viewer .bars i.paused b { animation-play-state: paused; }
+
+/* ---------- celebrations ---------- */
+.celebrate { position: relative; text-align: center; padding: 10px 0 18px; overflow: hidden; min-height: 200px; }
+.celebrate .big-emoji { font-size: 66px; animation: pop 0.6s ease-out; }
+.celebrate h3 { font-size: 22px; margin: 6px 0; }
+.confetti { position: absolute; inset: 0; pointer-events: none; }
+.confetti i { position: absolute; top: -30px; font-style: normal; font-size: 20px; animation: fall 2.8s ease-in infinite; }
+@keyframes fall { to { transform: translateY(260px) rotate(220deg); opacity: 0; } }
+@keyframes pop { 0% { transform: scale(0.3); } 70% { transform: scale(1.15); } }
+
+/* ---------- profile pictures ---------- */
+.avatar { overflow: hidden; }
+.avatar img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.avatar-edit { position: relative; cursor: pointer; flex: none; }
+.avatar-edit .cam {
+  position: absolute; right: -2px; bottom: -2px; width: 24px; height: 24px; border-radius: 50%;
+  background: var(--primary); color: #fff; display: grid; place-items: center; border: 2px solid var(--card);
+}
+
+.btn { white-space: nowrap; }
+
+/* ---------- home header ---------- */
+.home-head { position: relative; display: flex; align-items: flex-start; gap: 8px; padding: 10px 4px 18px; isolation: isolate; }
+.home-head::before {
+  content: ""; position: absolute; z-index: -1; inset: -14px -16px 0;
+  background:
+    radial-gradient(220px 140px at 92% 0%, color-mix(in srgb, var(--primary) 22%, transparent), transparent 70%),
+    radial-gradient(180px 120px at 70% 35%, color-mix(in srgb, var(--partner) 14%, transparent), transparent 70%);
+  pointer-events: none;
+}
+.hh-date { font-size: 12px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--primary); }
+.hh-greet { color: var(--muted); font-size: 15px; margin-top: 4px; }
+.hh-name {
+  font-size: 30px; font-weight: 800; letter-spacing: -0.5px; line-height: 1.15;
+  background: linear-gradient(90deg, var(--text) 40%, var(--primary));
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+}
+.hh-pill {
+  display: inline-block; margin-top: 8px; padding: 4px 11px; border-radius: 20px; font-size: 12px; font-weight: 600;
+  background: var(--card); color: var(--text); box-shadow: var(--shadow);
+}
+.hh-gear { background: var(--card); box-shadow: var(--shadow); margin-top: 4px; }
+
+/* location pill in the home header */
+button.hh-pill { border: none; cursor: pointer; font: inherit; font-size: 12px; font-weight: 600; text-align: left; }
+.hh-pill { max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hh-pill.off { color: var(--muted); }
+.hh-pill.off b { color: var(--primary); }
+.hh-pill .live {
+  display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--income); margin-right: 6px; vertical-align: 1px;
+  box-shadow: 0 0 0 0 color-mix(in srgb, var(--income) 60%, transparent); animation: live 1.8s infinite;
+}
+@keyframes live { 70% { box-shadow: 0 0 0 7px transparent; } 100% { box-shadow: 0 0 0 0 transparent; } }
+
+/* AJVerse logo (auth + splash) */
+img.logo { display: block; width: 84px; height: 84px; border-radius: 24px; margin: 0 auto 14px; box-shadow: 0 10px 24px rgba(14, 27, 44, 0.25); background: #0E1B2C; }
