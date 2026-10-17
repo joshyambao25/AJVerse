@@ -2,7 +2,7 @@
 // Your own files: try the network first (so updates show up), fall back to the saved copy.
 // Libraries from CDNs: use the saved copy (their URLs include a fixed version).
 
-const CACHE = 'ournest-v1';
+const CACHE = 'ournest-v2';
 
 const APP_FILES = [
   './',
@@ -77,4 +77,17 @@ self.addEventListener('fetch', (event) => {
   }
   // Everything else (Firebase data, map tiles) goes straight to the network.
   // Firebase keeps its own offline copy of your data.
+});
+
+// Tapping a notification opens (or focuses) OurNest.
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  const target = event.notification.tag === 'chat' ? './?tab=chat' : event.notification.tag?.startsWith('ev-') ? './?tab=plan' : './';
+  event.waitUntil((async () => {
+    const all = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+    for (const c of all) {
+      if ('focus' in c) { await c.focus(); return; }
+    }
+    await self.clients.openWindow(target);
+  })());
 });

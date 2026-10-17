@@ -1,7 +1,8 @@
 rules_version = '2';
 
 // OurNest security rules: only the two members of a couple can see
-// or change that couple's data.
+// or change that couple's data. "Just me" plans are visible only to
+// the person who created them.
 service cloud.firestore {
   match /databases/{database}/documents {
 
@@ -54,10 +55,21 @@ service cloud.firestore {
         allow write: if isMember(coupleId) && request.auth.uid == uid;
       }
 
-      // Transactions, budgets, goals, bills, updates, lists.
+      // Calendar: "together" plans are shared; "just me" plans are private to their creator.
+      match /events/{eventId} {
+        allow read: if isMember(coupleId)
+                    && (resource.data.private == false || resource.data.createdBy == request.auth.uid);
+        allow create: if isMember(coupleId) && request.resource.data.createdBy == request.auth.uid;
+        allow update: if isMember(coupleId)
+                      && (resource.data.private == false || resource.data.createdBy == request.auth.uid)
+                      && request.resource.data.createdBy == resource.data.createdBy;
+        allow delete: if isMember(coupleId)
+                      && (resource.data.private == false || resource.data.createdBy == request.auth.uid);
+      }
+
+      // Money, chat, moments, stories, photos, lists.
       match /{sub}/{docId} {
-        allow read: if isMember(coupleId);
-        allow write: if isMember(coupleId) && sub != 'locations';
+        allow read, write: if isMember(coupleId) && sub != 'locations' && sub != 'events';
       }
     }
   }

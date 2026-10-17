@@ -90,17 +90,29 @@ If you change `sw.js`, also bump `CACHE = 'ournest-v1'` to `'ournest-v2'` so pho
 
 ## Features
 
-- **Home:** month balance, who spent what (You / Partner / Shared), partner's location, battery and latest mood, bills due this week, days-together counter.
-- **Money → Activity:** income and expenses per month, category chart, filter by You / Partner / Shared.
-- **Money → Budgets:** monthly limits per category (personal or shared). Turns amber at 80% and red when over.
-- **Money → Goals:** savings goals. Tap one to add or withdraw savings.
-- **Money → Bills:** recurring bills. Tick them as paid each month, with the option to log each as an expense.
-- **Places:** map of you both, location sharing on/off, battery, directions to your partner, one-tap check-ins.
-- **Updates:** private feed with moods and notes. Tap ♥ to react.
-- **Lists:** shared grocery and to-do lists.
-- **Settings:** name, invite code, anniversary, currency, location privacy, sign out.
+- **Home**
+  - A Locket-style photo widget: your partner's latest snap, big. Tap 📷 to snap one back, or ⤓ to save it as your wallpaper.
+  - Month money summary (or a mini dashboard, or hidden — your choice in Settings).
+  - Coming-up plans, partner's location/battery/mood, bills due, days-together counter.
+- **Money**
+  - **Overview** dashboard: income, spent, saved %, average per day, 6-month chart, where it went, who spent, budget health, goals, biggest expenses.
+  - **Activity**, **Budgets**, **Goals**, **Bills** — with the You / Partner / Shared filter.
+- **Plan**
+  - **Calendar** with events and to-dos. Each one is **Together** (both see it) or **Just me** (only you can see it).
+  - Reminders (at the time, 15 min, 1 hour or 1 day before). Only the person who added it gets the reminder.
+  - If you open the app late, a "You may have missed these" pop-up shows them, with **Done** and **Snooze 1h**.
+  - **Lists**: shared grocery and to-do lists.
+- **Chat:** private messenger with photos, "Seen ✓✓" and an unread badge.
+- **Moments**
+  - Facebook-style posts with mood, text and a photo; ❤️ love and comments.
+  - **Stories** (photo or coloured text) that last 24 hours, with a full-screen viewer and "Seen by" for your own.
+- **Places:** live map, location sharing on/off, battery, directions, one-tap check-ins.
+- **Settings:** invite code (only shown here), **Light / Dark / Auto theme**, Money-on-Home option, notifications, install button, anniversary, currency, privacy.
 
 ## Good to know
-- **Offline:** you can add and edit anything with no signal, and a yellow banner shows you're offline. Two things need internet: first sign-in on a phone, and pairing with the code.
-- **Location:** a web app can only read GPS while it's open on screen. Your partner sees where you were when you last had OurNest open, and check-ins always send your current spot.
-- **Notifications:** not included in this version.
+- **After this update, publish the new `firestore.rules` again** (Firebase → Firestore → Rules → paste → Publish). The calendar's "Just me" privacy depends on it.
+- **Offline:** you can add and edit anything with no signal. Two things need internet: first sign-in on a phone, and pairing with the code.
+- **Photos** are shrunk on the phone (about 100–400 KB each) and saved in Firestore, so they work on the free Firebase plan. The free plan holds 1 GB — thousands of photos.
+- **Notifications:** turn on "Reminders & messages" in Settings on each phone. A web app can alert you while OurNest is open or running in the background. It can't wake a fully closed app — when you open it, any missed reminders pop up. (Always-on push needs Firebase Cloud Functions on the paid Blaze plan; that can be added later.) On iPhone, notifications only work after adding OurNest to the Home Screen (iOS 16.4+).
+- **Home-screen widget:** web apps can't place real widgets on the phone's home screen. Instead: on Android, press and hold the OurNest icon for shortcuts (📸 Snap, ➕ Expense, 📅 Plan, 💬 Chat) and drag one to your home screen; and you can save the latest moment photo and set it as your wallpaper.
+- **Location:** a web app reads GPS only while it's open. Check-ins always send your current spot.

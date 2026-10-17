@@ -1,6 +1,11 @@
 // =============================================================================
-// OurNest — shared budget, location and updates for two.
+// OurNest — money, plans, places and little moments for two.
 // Plain JavaScript + Firebase. Edit freely in VS Code.
+//
+// Sections (search for the ==== lines):
+//   SETTINGS · FIREBASE · STATE · HELPERS · ICONS · DATA · PHOTOS · LOCATION
+//   REMINDERS · RENDER · HOME · MONEY · PLAN · CHAT · MOMENTS · PLACES · SETTINGS VIEW
+//   SHEETS · VIEWERS · ACTIONS · FORMS · WIRING
 // =============================================================================
 
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js';
@@ -10,14 +15,13 @@ import {
 } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js';
 import {
   initializeFirestore, getFirestore, persistentLocalCache, persistentMultipleTabManager,
-  doc, collection, onSnapshot, setDoc, updateDoc, deleteDoc, getDocFromServer, writeBatch,
+  doc, collection, onSnapshot, setDoc, updateDoc, deleteDoc, getDoc, getDocFromServer, writeBatch,
   query, where, orderBy, limit, Timestamp, arrayUnion, arrayRemove, increment,
 } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js';
 import { firebaseConfig } from './firebase-config.js';
 
-// -----------------------------------------------------------------------------
-// Settings you may want to change
-// -----------------------------------------------------------------------------
+// ==== SETTINGS ===============================================================
+// Things you may want to change.
 
 const EXPENSE_CATS = [
   { name: 'Food', emoji: '🍔', color: '#F59E0B' },
@@ -43,12 +47,13 @@ const GOAL_EMOJIS = ['🎯', '🏠', '✈️', '💍', '🚗', '📱', '🎓', '
 const CHECKINS = [['🏠', 'Home safe'], ['🏢', 'At work'], ['🚗', 'On my way'], ['✅', 'Arrived'], ['🍽️', 'Eating']];
 const LISTS = [['Groceries', '🛒'], ['To-do', '✅']];
 const CURRENCIES = ['₱', '$', '€', '¥', '£', '₩', 'S$', 'A$'];
+const STORY_BGS = ['#3B82F6', '#F2789F', '#14B8A6', '#8B5CF6', '#F59E0B', '#1E293B'];
+const REMIND_OPTIONS = [[-1, 'No reminder'], [0, 'At the time'], [15, '15 min before'], [60, '1 hour before'], [1440, '1 day before']];
 const DEFAULT_MAP_CENTER = [14.5995, 120.9842]; // Manila
+const STORY_HOURS = 24;
 const COLORS = { me: '#3B82F6', partner: '#F2789F', shared: '#14B8A6', income: '#16A34A', expense: '#E11D48', warn: '#F59E0B', primary: '#3B82F6' };
 
-// -----------------------------------------------------------------------------
-// Firebase
-// -----------------------------------------------------------------------------
+// ==== FIREBASE ===============================================================
 
 const configured = !!(firebaseConfig && firebaseConfig.apiKey && !firebaseConfig.apiKey.startsWith('PASTE'));
 let auth = null;
@@ -65,9 +70,13 @@ if (configured) {
   }
 }
 
-// -----------------------------------------------------------------------------
-// App state
-// -----------------------------------------------------------------------------
+// ==== STATE ==================================================================
+
+// Per-phone preferences (saved in this browser only)
+const PREFS_KEY = 'ournest.prefs';
+const prefs = Object.assign({ theme: 'auto', homeMoney: 'card', notify: false }, loadPrefs());
+function loadPrefs() { try { return JSON.parse(localStorage.getItem(PREFS_KEY)) || {}; } catch { return {}; } }
+function savePrefs() { try { localStorage.setItem(PREFS_KEY, JSON.stringify(prefs)); } catch { /* private mode */ } }
 
 const S = {
   booting: true,
@@ -77,41 +86,40 @@ const S = {
   couple: null,
   coupleReady: false,
   tab: 'home',
-  moneyTab: 'activity',
+  moneyTab: 'overview',
   who: 'all',
   month: firstOfMonth(new Date()),
+  planTab: 'calendar',
+  calMonth: firstOfMonth(new Date()),
+  calDay: startOfDay(new Date()),
   listName: 'Groceries',
   mood: '',
   authMode: 'signin',
-  txns: [],
-  homeTxns: [],
-  budgets: [],
-  goals: [],
-  bills: [],
-  posts: [],
-  items: [],
-  locs: {},
+  postPhoto: null, // photo waiting to be posted (data URL)
+  txns: [], homeTxns: [], trendTxns: [], budgets: [], goals: [], bills: [], posts: [], items: [], locs: {},
+  sharedEvents: [], myEvents: [], events: [], messages: [], stories: [],
   loaded: {},
+  ver: {},
 };
 
 let pendingName = null;
 let createdCoupleId = null;
 let listeningCid = null;
 let partnerId = null;
-let userUnsub = null, coupleUnsub = null, partnerUnsub = null, txnUnsub = null;
+let userUnsub = null, coupleUnsub = null, partnerUnsub = null, txnUnsub = null, trendUnsub = null;
 let dataUnsubs = [];
 let resubTimer = null;
 let askResolve = null;
+let deferredInstall = null;
+let bootHandled = false;
 
-// -----------------------------------------------------------------------------
-// Small helpers
-// -----------------------------------------------------------------------------
+// ==== HELPERS ================================================================
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const num = (v) => (typeof v === 'number' && isFinite(v) ? v : Number(v) || 0);
-const toDate = (v) => (v && typeof v.toDate === 'function' ? v.toDate() : v instanceof Date ? v : new Date());
+const toDate = (v) => (v && typeof v.toDate === 'function' ? v.toDate() : v instanceof Date ? v : typeof v === 'number' ? new Date(v) : new Date());
 const warn = (e) => console.warn(e);
 
 function firstOfMonth(d) { return new Date(d.getFullYear(), d.getMonth(), 1); }
@@ -119,15 +127,22 @@ function monthKey(d) { return `${d.getFullYear()}-${String(d.getMonth() + 1).pad
 function startOfDay(d) { return new Date(d.getFullYear(), d.getMonth(), d.getDate()); }
 function daysBetween(a, b) { return Math.round((startOfDay(b) - startOfDay(a)) / 86400000); }
 function sameMonth(a, b) { return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth(); }
+function sameDay(a, b) { return sameMonth(a, b) && a.getDate() === b.getDate(); }
 function dateInputValue(d) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
+function timeInputValue(d) { return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; }
 function parseDateInput(s) {
   if (!s) return new Date();
   const [y, m, d] = s.split('-').map(Number);
   const now = new Date();
   if (y === now.getFullYear() && m === now.getMonth() + 1 && d === now.getDate()) return now;
   return new Date(y, m - 1, d, 12, 0, 0);
+}
+function parseDateTime(dateStr, timeStr) {
+  const [y, m, d] = String(dateStr).split('-').map(Number);
+  const [hh, mm] = String(timeStr || '00:00').split(':').map(Number);
+  return new Date(y, (m || 1) - 1, d || 1, hh || 0, mm || 0);
 }
 function parseAmount(s) { const v = parseFloat(String(s ?? '').replace(/,/g, '').trim()); return isFinite(v) ? v : null; }
 function fmtDate(d, opts) { return d.toLocaleDateString('en-PH', opts); }
@@ -139,6 +154,13 @@ function timeAgo(d) {
   if (s < 86400) return `${Math.floor(s / 3600)} hr ago`;
   if (s < 604800) return `${Math.floor(s / 86400)}d ago`;
   return fmtDate(d, { month: 'short', day: 'numeric' });
+}
+function dayLabel(d) {
+  const diff = daysBetween(d, new Date());
+  if (diff === 0) return 'Today';
+  if (diff === 1) return 'Yesterday';
+  if (diff === -1) return 'Tomorrow';
+  return fmtDate(d, { weekday: 'long', month: 'short', day: 'numeric' });
 }
 function greeting() { const h = new Date().getHours(); return h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening'; }
 function withTimeout(p, ms) { return Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), ms))]); }
@@ -172,6 +194,7 @@ const myName = () => S.me?.name || 'You';
 const partnerName = () => S.partner?.name || 'Partner';
 const hasPartner = () => !!S.partner;
 const nameOf = (owner) => (isMine(owner) ? 'You' : partnerName());
+const colorOf = (owner) => (isMine(owner) ? COLORS.me : COLORS.partner);
 
 // Who filter: all / mine / partner / shared
 function whoMatch(shared, owner) {
@@ -183,31 +206,35 @@ function whoMatch(shared, owner) {
   }
 }
 
-// -----------------------------------------------------------------------------
-// Icons (simple inline SVG)
-// -----------------------------------------------------------------------------
+// ==== ICONS ==================================================================
 
 const ICONS = {
   home: '<path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/>',
   wallet: '<rect x="3" y="6" width="18" height="14" rx="3"/><path d="M3 10h18"/><path d="M16 15h2"/>',
   map: '<path d="M12 21s-7-6.2-7-11a7 7 0 0 1 14 0c0 4.8-7 11-7 11z"/><circle cx="12" cy="10" r="2.5"/>',
   chat: '<path d="M4 5h16v11H9l-5 4z"/>',
+  calendar: '<rect x="3" y="5" width="18" height="16" rx="3"/><path d="M3 10h18M8 3v4M16 3v4"/>',
+  sparkle: '<path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"/><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"/>',
   list: '<path d="M10 6h10M10 12h10M10 18h10"/><path d="M4 6l1.5 1.5L8 5M4 12l1.5 1.5L8 11M4 18l1.5 1.5L8 17"/>',
   settings: '<circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9 7 7M17 17l2.1 2.1M4.9 19.1 7 17M17 7l2.1-2.1"/>',
   plus: '<path d="M12 5v14M5 12h14"/>',
   left: '<path d="M15 18l-6-6 6-6"/>',
   right: '<path d="M9 18l6-6-6-6"/>',
   back: '<path d="M19 12H5M11 18l-6-6 6-6"/>',
+  close: '<path d="M6 6l12 12M18 6 6 18"/>',
   trash: '<path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/>',
-  copy: '<rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h8"/>',
   send: '<path d="M4 12 20 4l-6 16-3-7z"/>',
   heart: '<path d="M12 20s-7-4.5-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 10c0 5.5-7 10-7 10z"/>',
+  comment: '<path d="M4 5h16v11H9l-5 4z"/><path d="M8 9h8M8 12h5"/>',
   nav: '<path d="M3 11 21 3l-8 18-2-8z"/>',
   pin: '<path d="M12 21s-7-6.2-7-11a7 7 0 0 1 14 0c0 4.8-7 11-7 11z"/><circle cx="12" cy="10" r="2.5"/>',
   logout: '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5M21 12H9"/>',
   edit: '<path d="M4 20h4L19 9l-4-4L4 16z"/>',
   share: '<circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="M8.6 13.5l6.8 4M15.4 6.5l-6.8 4"/>',
-  target: '<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3"/>',
+  camera: '<path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/>',
+  image: '<rect x="3" y="4" width="18" height="16" rx="3"/><circle cx="9" cy="10" r="2"/><path d="M21 16l-5-5-9 9"/>',
+  download: '<path d="M12 4v11M7 10l5 5 5-5M5 20h14"/>',
+  bell: '<path d="M6 16V11a6 6 0 0 1 12 0v5l2 2H4z"/><path d="M10 21h4"/>',
 };
 function icon(name, size = 22) {
   return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[name] || ''}</svg>`;
@@ -219,24 +246,23 @@ const avatar = (name, color, size = 40) => {
   const letter = (String(name || '?').trim().charAt(0) || '?').toUpperCase();
   return `<span class="avatar" style="--c:${color};--s:${size}px">${esc(letter)}</span>`;
 };
-const ownerTag = (shared, owner) => (shared ? tag('Shared', COLORS.shared) : tag(nameOf(owner), isMine(owner) ? COLORS.me : COLORS.partner));
+const ownerTag = (shared, owner) => (shared ? tag('Shared', COLORS.shared) : tag(nameOf(owner), colorOf(owner)));
 const empty = (emoji, text) => `<div class="empty"><div class="bubble">${emoji}</div>${esc(text).replace(/\n/g, '<br>')}</div>`;
+const photoImg = (id, cls = 'photo', tap = true) => `<img class="${cls} loading" data-photo="${esc(id)}" alt=""${tap ? ` data-action="view-photo" data-id="${esc(id)}"` : ''}>`;
 
-// -----------------------------------------------------------------------------
-// Firestore writes (fire-and-forget: saved on the phone first, synced later)
-// -----------------------------------------------------------------------------
+// ==== DATA ===================================================================
+// Writes are fire-and-forget: saved on the phone first, synced when online.
 
 const col = (name) => collection(db, 'couples', S.couple.id, name);
 function save(name, data, id) {
   const ref = id ? doc(col(name), id) : doc(col(name));
   setDoc(ref, data, { merge: true }).catch(warn);
+  return ref.id;
 }
 function patch(name, id, data) { updateDoc(doc(col(name), id), data).catch(warn); }
 function remove(name, id) { deleteDoc(doc(col(name), id)).catch(warn); }
 
-// -----------------------------------------------------------------------------
-// Auth & profile
-// -----------------------------------------------------------------------------
+// ---- auth & profile
 
 function startAuth() {
   onAuthStateChanged(auth, (user) => {
@@ -287,25 +313,28 @@ function authError(e) {
     case 'auth/network-request-failed': return 'No internet. Signing in needs to be online once.';
     case 'auth/too-many-requests': return 'Too many tries. Please wait a moment.';
     case 'auth/unauthorized-domain': return 'This website address is not allowed yet. Add it in Firebase → Authentication → Settings → Authorized domains.';
+    case 'auth/api-key-not-valid.-please-pass-a-valid-api-key.':
+    case 'auth/invalid-api-key': return 'The Firebase API key looks wrong. Copy it again into firebase-config.js.';
     default: return e?.message || 'Something went wrong.';
   }
 }
 
-// -----------------------------------------------------------------------------
-// Couple space
-// -----------------------------------------------------------------------------
+// ---- couple space
 
 function stopCouple() {
-  coupleUnsub?.(); partnerUnsub?.(); txnUnsub?.();
+  coupleUnsub?.(); partnerUnsub?.(); txnUnsub?.(); trendUnsub?.();
   dataUnsubs.forEach((u) => u());
-  coupleUnsub = partnerUnsub = txnUnsub = null;
+  coupleUnsub = partnerUnsub = txnUnsub = trendUnsub = null;
   dataUnsubs = [];
   listeningCid = null;
   partnerId = null;
   S.couple = null;
   S.partner = null;
   S.coupleReady = false;
-  Object.assign(S, { txns: [], homeTxns: [], budgets: [], goals: [], bills: [], posts: [], items: [], locs: {}, loaded: {} });
+  Object.assign(S, {
+    txns: [], homeTxns: [], trendTxns: [], budgets: [], goals: [], bills: [], posts: [], items: [], locs: {},
+    sharedEvents: [], myEvents: [], events: [], messages: [], stories: [], loaded: {},
+  });
   stopTracking();
 }
 
@@ -355,46 +384,82 @@ const mapTxns = (snap) => snap.docs.map((d) => {
   const x = d.data();
   return { id: d.id, ...x, amount: num(x.amount), date: toDate(x.date), isIncome: x.type === 'income' };
 });
-function monthQuery(month) {
-  const end = new Date(month.getFullYear(), month.getMonth() + 1, 1);
+const mapEvents = (snap) => snap.docs.map((d) => {
+  const x = d.data();
+  return {
+    id: d.id, ...x,
+    date: toDate(x.date),
+    remind: x.remind == null ? -1 : num(x.remind),
+    notifiedAt: x.notifiedAt ? toDate(x.notifiedAt) : null,
+    snoozeUntil: x.snoozeUntil ? toDate(x.snoozeUntil) : null,
+  };
+});
+function rangeQuery(from, to) {
   return query(col('transactions'),
-    where('date', '>=', Timestamp.fromDate(month)),
-    where('date', '<', Timestamp.fromDate(end)),
+    where('date', '>=', Timestamp.fromDate(from)),
+    where('date', '<', Timestamp.fromDate(to)),
     orderBy('date', 'desc'));
+}
+const monthQuery = (m) => rangeQuery(m, new Date(m.getFullYear(), m.getMonth() + 1, 1));
+
+function watch(q, key, map, after) {
+  dataUnsubs.push(onSnapshot(q, (snap) => {
+    S[key] = map(snap);
+    S.loaded[key] = true;
+    S.ver[key] = (S.ver[key] || 0) + 1;
+    after?.();
+    render();
+  }, (e) => { warn(e); scheduleResub(); }));
+}
+
+function mergeEvents() {
+  const byId = new Map();
+  [...S.sharedEvents, ...S.myEvents].forEach((e) => byId.set(e.id, e));
+  S.events = [...byId.values()].sort((a, b) => a.date - b.date);
+  S.loaded.events = !!(S.loaded.sharedEvents && S.loaded.myEvents);
+  S.ver.events = (S.ver.events || 0) + 1;
+  if (S.loaded.events) setTimeout(checkReminders, 300);
 }
 
 function subscribeData() {
   dataUnsubs.forEach((u) => u());
   dataUnsubs = [];
-  const onErr = (e) => { warn(e); scheduleResub(); };
-  const watch = (q, key, map) => dataUnsubs.push(onSnapshot(q, (snap) => {
-    S[key] = map(snap);
-    S.loaded[key] = true;
-    render();
-  }, onErr));
-
   watch(monthQuery(firstOfMonth(new Date())), 'homeTxns', mapTxns);
   watch(col('budgets'), 'budgets', (s) => mapDocs(s).map((b) => ({ ...b, limit: num(b.limit) })).sort((a, b) => String(a.category).localeCompare(b.category)));
   watch(col('goals'), 'goals', (s) => mapDocs(s).map((g) => ({ ...g, target: num(g.target), saved: num(g.saved) })));
   watch(col('bills'), 'bills', (s) => mapDocs(s).map((b) => ({ ...b, amount: num(b.amount), dueDay: num(b.dueDay) || 1, paidMonths: b.paidMonths || [] })).sort((a, b) => a.dueDay - b.dueDay));
-  watch(query(col('updates'), orderBy('createdAt', 'desc'), limit(80)), 'posts', (s) => mapDocs(s).map((p) => ({ ...p, createdAt: toDate(p.createdAt), hearts: p.hearts || [] })));
+  watch(query(col('updates'), orderBy('createdAt', 'desc'), limit(80)), 'posts',
+    (s) => mapDocs(s).map((p) => ({ ...p, createdAt: toDate(p.createdAt), hearts: p.hearts || [], comments: p.comments || [] })));
   watch(query(col('items'), orderBy('createdAt')), 'items', mapDocs);
   watch(col('locations'), 'locs', (s) => {
     const o = {};
     s.docs.forEach((d) => { const x = d.data(); o[d.id] = { ...x, lat: num(x.lat), lng: num(x.lng), updatedAt: toDate(x.updatedAt) }; });
     return o;
   });
+  // Calendar: "together" events + my own (private ones stay private).
+  watch(query(col('events'), where('private', '==', false)), 'sharedEvents', mapEvents, mergeEvents);
+  watch(query(col('events'), where('createdBy', '==', uid())), 'myEvents', mapEvents, mergeEvents);
+  watch(query(col('messages'), orderBy('createdAt', 'desc'), limit(300)), 'messages',
+    (s) => mapDocs(s).map((m) => ({ ...m, createdAt: toDate(m.createdAt), seenBy: m.seenBy || [] })).reverse(), onMessages);
+  watch(query(col('stories'), orderBy('createdAt', 'desc'), limit(40)), 'stories',
+    (s) => mapDocs(s).map((x) => ({ ...x, createdAt: toDate(x.createdAt), seenBy: x.seenBy || [] })));
   subscribeTxns();
 }
 
 function subscribeTxns() {
   txnUnsub?.();
+  trendUnsub?.();
   S.loaded.txns = false;
+  S.loaded.trendTxns = false;
+  const onErr = (e) => { warn(e); scheduleResub(); };
   txnUnsub = onSnapshot(monthQuery(S.month), (snap) => {
-    S.txns = mapTxns(snap);
-    S.loaded.txns = true;
-    render();
-  }, (e) => { warn(e); scheduleResub(); });
+    S.txns = mapTxns(snap); S.loaded.txns = true; render();
+  }, onErr);
+  const from = new Date(S.month.getFullYear(), S.month.getMonth() - 5, 1);
+  const to = new Date(S.month.getFullYear(), S.month.getMonth() + 1, 1);
+  trendUnsub = onSnapshot(rangeQuery(from, to), (snap) => {
+    S.trendTxns = mapTxns(snap); S.loaded.trendTxns = true; render();
+  }, onErr);
 }
 
 const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -434,9 +499,75 @@ async function joinCouple(raw) {
   }
 }
 
-// -----------------------------------------------------------------------------
-// Location sharing
-// -----------------------------------------------------------------------------
+// ==== PHOTOS =================================================================
+// Photos are shrunk on the phone and stored in Firestore (works on the free plan).
+
+const photoCache = new Map();
+const photoLoading = new Set();
+
+async function compressImage(file, maxSide = 1280, maxChars = 650000) {
+  const url = URL.createObjectURL(file);
+  try {
+    const img = await new Promise((resolve, reject) => {
+      const i = new Image();
+      i.onload = () => resolve(i);
+      i.onerror = () => reject(new Error('Could not read that picture.'));
+      i.src = url;
+    });
+    let scale = Math.min(1, maxSide / Math.max(img.naturalWidth, img.naturalHeight));
+    let quality = 0.8;
+    let data = '';
+    for (let attempt = 0; attempt < 7; attempt++) {
+      const w = Math.max(1, Math.round(img.naturalWidth * scale));
+      const h = Math.max(1, Math.round(img.naturalHeight * scale));
+      const c = document.createElement('canvas');
+      c.width = w; c.height = h;
+      c.getContext('2d').drawImage(img, 0, 0, w, h);
+      data = c.toDataURL('image/jpeg', quality);
+      if (data.length <= maxChars) break;
+      quality = Math.max(0.5, quality - 0.1);
+      scale *= 0.85;
+    }
+    return data;
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+function savePhoto(dataUrl) {
+  const ref = doc(col('photos'));
+  photoCache.set(ref.id, dataUrl);
+  setDoc(ref, { data: dataUrl, by: uid(), createdAt: Timestamp.now() }).catch(warn);
+  return ref.id;
+}
+
+function hydratePhotos() {
+  $$('img[data-photo]').forEach((img) => {
+    const id = img.dataset.photo;
+    if (!id || img.dataset.loaded) return;
+    const cached = photoCache.get(id);
+    if (cached) {
+      img.src = cached;
+      img.dataset.loaded = '1';
+      img.classList.remove('loading');
+      return;
+    }
+    if (photoLoading.has(id) || !S.coupleReady) return;
+    photoLoading.add(id);
+    getDoc(doc(col('photos'), id)).then((snap) => {
+      photoLoading.delete(id);
+      if (snap.exists()) { photoCache.set(id, snap.data().data); hydratePhotos(); }
+    }).catch((e) => { photoLoading.delete(id); warn(e); });
+  });
+}
+
+async function pickPhoto(file) {
+  if (!file) return null;
+  if (!file.type.startsWith('image/')) { toast('Please choose a picture.'); return null; }
+  try { return await compressImage(file); } catch (e) { toast(e.message || 'Could not read that picture.'); return null; }
+}
+
+// ==== LOCATION ===============================================================
 
 let watchId = null;
 let lastSent = null;
@@ -500,9 +631,110 @@ async function setSharing(on) {
   render();
 }
 
-// -----------------------------------------------------------------------------
-// Rendering
-// -----------------------------------------------------------------------------
+// ==== REMINDERS & NOTIFICATIONS ==============================================
+// Reminders only go to the person who created the to-do / event.
+
+async function notify(title, body, tagName) {
+  if (!prefs.notify || !('Notification' in window) || Notification.permission !== 'granted') return;
+  try {
+    const reg = await navigator.serviceWorker?.getRegistration();
+    const opts = { body, tag: tagName, icon: './icons/icon-192.png', badge: './icons/icon-192.png' };
+    if (reg) await reg.showNotification(title, opts);
+    else new Notification(title, opts);
+  } catch (e) { warn(e); }
+}
+
+async function enableNotifications(on) {
+  if (!on) { prefs.notify = false; savePrefs(); render(); return; }
+  if (!('Notification' in window)) {
+    toast('This browser does not support notifications. On iPhone, add OurNest to the Home Screen first.');
+    render();
+    return;
+  }
+  const p = await Notification.requestPermission();
+  prefs.notify = p === 'granted';
+  savePrefs();
+  toast(prefs.notify ? 'Notifications on 🔔' : 'Notifications were blocked. You can allow them in your browser settings.');
+  if (prefs.notify) notify('OurNest', 'Notifications are working 💙', 'test');
+  render();
+}
+
+function remindAt(e) {
+  if (e.snoozeUntil) return e.snoozeUntil;
+  if (e.remind == null || e.remind < 0) return null;
+  const base = e.allDay ? new Date(e.date.getFullYear(), e.date.getMonth(), e.date.getDate(), 8, 0) : e.date;
+  return new Date(base.getTime() - e.remind * 60000);
+}
+
+function eventWhen(e) {
+  const day = dayLabel(e.date);
+  return e.allDay ? `${day} · all day` : `${day} · ${fmtTime(e.date)}`;
+}
+
+let reminderQueue = [];
+function checkReminders() {
+  if (!S.coupleReady || !S.loaded.events) return;
+  const now = Date.now();
+  const due = S.events.filter((e) => e.createdBy === uid() && !e.done && !e.notifiedAt && remindAt(e) && remindAt(e).getTime() <= now);
+  if (!due.length) return;
+  for (const e of due) {
+    e.notifiedAt = new Date();
+    patch('events', e.id, { notifiedAt: Timestamp.now() });
+    notify(e.kind === 'todo' ? '✅ To-do reminder' : '📅 Coming up', `${e.title} · ${eventWhen(e)}`, `ev-${e.id}`);
+  }
+  reminderQueue.push(...due.map((e) => e.id));
+  showReminderPopup();
+}
+
+function showReminderPopup() {
+  if (!reminderQueue.length || !$('#modal').hidden || !$('#viewer').hidden) return;
+  const ids = [...new Set(reminderQueue)];
+  reminderQueue = [];
+  const list = ids.map((id) => S.events.find((e) => e.id === id)).filter(Boolean);
+  if (!list.length) return;
+  const missed = list.some((e) => Date.now() - remindAt(e)?.getTime() > 10 * 60000);
+  openSheet(`<div class="sheet-head"><h3>${missed ? '⏰ You may have missed these' : '⏰ Don\'t forget'}</h3></div>
+    <div class="card flush" style="box-shadow:none;background:var(--card-2)">
+      ${list.map((e) => `<div class="row" style="flex-wrap:wrap">
+        <span class="kind-ic" style="--c:${e.private ? COLORS.me : COLORS.shared}">${e.kind === 'todo' ? '✅' : '📅'}</span>
+        <span class="grow"><b>${esc(e.title)}</b><div class="tiny muted">${esc(eventWhen(e))}</div></span>
+        <span class="hstack" style="gap:6px">
+          <button class="btn sm" data-action="snooze" data-id="${e.id}">Snooze 1h</button>
+          <button class="btn sm primary" data-action="event-done" data-id="${e.id}">Done</button>
+        </span></div>`).join('')}
+    </div>
+    <button class="btn block" data-action="close-modal" style="margin-top:14px">OK</button>`);
+}
+
+// ---- new chat messages
+let lastMsgTime = null;
+function onMessages() {
+  const theirs = S.messages.filter((m) => !isMine(m.from));
+  const newest = theirs.length ? theirs[theirs.length - 1].createdAt.getTime() : 0;
+  if (lastMsgTime === null) { lastMsgTime = newest; return; } // first load: no alerts
+  const fresh = theirs.filter((m) => m.createdAt.getTime() > lastMsgTime);
+  lastMsgTime = Math.max(lastMsgTime, newest);
+  if (!fresh.length) return;
+  const last = fresh[fresh.length - 1];
+  const text = last.photoId ? '📷 Photo' : last.text;
+  const watching = S.tab === 'chat' && !document.hidden;
+  if (!watching) {
+    notify(`💬 ${partnerName()}`, text, 'chat');
+    if (!document.hidden) toast(`💬 ${partnerName()}: ${String(text).slice(0, 60)}`);
+  }
+}
+
+function markChatSeen() {
+  if (S.tab !== 'chat' || document.hidden || !S.coupleReady) return;
+  const unseen = S.messages.filter((m) => !isMine(m.from) && !m.seenBy.includes(uid()));
+  if (!unseen.length) return;
+  const b = writeBatch(db);
+  unseen.slice(-50).forEach((m) => { m.seenBy.push(uid()); b.update(doc(col('messages'), m.id), { seenBy: arrayUnion(uid()) }); });
+  b.commit().catch(warn);
+}
+const unreadCount = () => S.messages.filter((m) => !isMine(m.from) && !m.seenBy.includes(uid())).length;
+
+// ==== RENDER =================================================================
 
 let renderQueued = false;
 function render() {
@@ -536,6 +768,7 @@ function renderNow(force = false) {
     resetMap();
     root.innerHTML = appShell();
     root.dataset.screen = 'app';
+    handleBootLink();
   }
   renderTab();
 }
@@ -555,7 +788,7 @@ function authView() {
   return `<div class="center-screen">
     ${LOGO}
     <div class="brand">OurNest</div>
-    <p class="tagline">Money, places and little updates — together.</p>
+    <p class="tagline">Money, plans, places and little moments — together.</p>
     <form class="card" data-form="auth" style="padding:20px">
       <h3 style="margin-bottom:16px">${up ? 'Create your account' : 'Welcome back'}</h3>
       ${up ? `<label class="field"><span>Your name</span><input name="name" autocomplete="name" required></label>` : ''}
@@ -575,7 +808,7 @@ function pairView() {
     <p class="muted" style="margin:6px 0 18px">OurNest is a private space for the two of you. One of you creates it, then the other joins with the invite code.</p>
     <div class="card" style="padding:20px">
       <h3>🏠 Create our space</h3>
-      <p class="muted small" style="margin:6px 0 14px">You'll get a 6-letter code to send to your partner.</p>
+      <p class="muted small" style="margin:6px 0 14px">You'll get a 6-letter code to send to your partner (find it later in Settings).</p>
       <button class="btn primary block" data-action="create-couple">${icon('plus', 20)} Create</button>
     </div>
     <div class="or">or</div>
@@ -587,44 +820,91 @@ function pairView() {
   </div>`;
 }
 
-const NAV = [['home', 'home', 'Home'], ['money', 'wallet', 'Money'], ['map', 'map', 'Places'], ['updates', 'chat', 'Updates'], ['lists', 'list', 'Lists']];
+const NAV = [
+  ['home', 'home', 'Home'],
+  ['money', 'wallet', 'Money'],
+  ['plan', 'calendar', 'Plan'],
+  ['chat', 'chat', 'Chat'],
+  ['moments', 'sparkle', 'Moments'],
+  ['map', 'map', 'Places'],
+];
 function appShell() {
   return `<main id="view"></main>
     <div id="mapWrap" hidden><div id="map"></div><div id="mapTop"></div><div id="mapPanel"></div></div>
     <div id="fabSlot"></div>
     <nav class="nav"><div class="nav-inner">
-      ${NAV.map(([t, ic, label]) => `<button data-action="tab" data-tab="${t}"><span class="ic">${icon(ic)}</span>${label}</button>`).join('')}
+      ${NAV.map(([t, ic, label]) => `<button data-action="tab" data-tab="${t}"><span class="ic">${icon(ic)}</span>${label}<span class="badge" data-badge="${t}" hidden></span></button>`).join('')}
     </div></nav>`;
+}
+
+function goTab(tab) {
+  S.tab = tab;
+  window.scrollTo(0, 0);
+  renderTab();
 }
 
 function renderTab() {
   $$('.nav button').forEach((b) => b.classList.toggle('active', b.dataset.tab === S.tab || (S.tab === 'settings' && b.dataset.tab === 'home')));
+  const unread = unreadCount();
+  const badge = $('[data-badge=chat]');
+  if (badge) { badge.hidden = unread === 0; badge.textContent = unread > 9 ? '9+' : String(unread); }
+
   const view = $('#view');
-  const mapWrap = $('#mapWrap');
   const isMap = S.tab === 'map';
   view.hidden = isMap;
-  mapWrap.hidden = !isMap;
-  $('#fabSlot').innerHTML = S.tab === 'money' ? `<button class="fab" data-action="money-add" aria-label="Add">${icon('plus', 28)}</button>` : '';
+  $('#mapWrap').hidden = !isMap;
+
+  const fab = (S.tab === 'money') || (S.tab === 'plan' && S.planTab === 'calendar');
+  $('#fabSlot').innerHTML = fab ? `<button class="fab" data-action="fab" aria-label="Add">${icon('plus', 28)}</button>` : '';
 
   if (isMap) { renderMap(); return; }
+
+  const key = S.tab === 'plan' ? `plan:${S.planTab}:${S.listName}` : S.tab;
+  const keyChanged = view.dataset.key !== key;
 
   switch (S.tab) {
     case 'home': view.innerHTML = homeView(); break;
     case 'money': view.innerHTML = moneyView(); break;
     case 'settings': view.innerHTML = settingsView(); break;
-    case 'updates':
-      if (view.dataset.key !== 'updates') view.innerHTML = updatesShell();
-      $('#feed').innerHTML = feedHtml();
+    case 'plan':
+      if (S.planTab === 'lists') {
+        if (keyChanged) view.innerHTML = planHeader() + listsShell();
+        $('#listItems').innerHTML = listItemsHtml();
+      } else {
+        view.innerHTML = planHeader() + calendarHtml();
+      }
       break;
-    case 'lists':
-      if (view.dataset.key !== `lists:${S.listName}`) view.innerHTML = listsShell();
-      $('#listItems').innerHTML = listItemsHtml();
+    case 'chat': {
+      if (keyChanged) view.innerHTML = chatShell();
+      $('#chatHead').innerHTML = chatHeadHtml();
+      const sig = `${S.ver.messages}|${S.partner?.name}|${S.me?.name}|${S.loaded.messages}`;
+      const box = $('#msgs');
+      if (keyChanged || box.dataset.sig !== sig) {
+        const nearBottom = window.innerHeight + window.scrollY >= document.body.scrollHeight - 160;
+        box.innerHTML = messagesHtml();
+        box.dataset.sig = sig;
+        if (keyChanged || nearBottom) requestAnimationFrame(() => window.scrollTo(0, document.body.scrollHeight));
+      }
+      markChatSeen();
       break;
+    }
+    case 'moments': {
+      if (keyChanged) view.innerHTML = momentsShell();
+      const sig = `${S.ver.posts}|${S.ver.stories}|${S.partner?.name}|${S.me?.name}`;
+      const feed = $('#feed');
+      if (keyChanged || feed.dataset.sig !== sig) {
+        $('#stories').innerHTML = storiesBarHtml();
+        feed.innerHTML = feedHtml();
+        feed.dataset.sig = sig;
+      }
+      break;
+    }
   }
-  view.dataset.key = S.tab === 'lists' ? `lists:${S.listName}` : S.tab;
+  view.dataset.key = key;
+  hydratePhotos();
 }
 
-// ---------------------------------------------------------------- Home
+// ==== HOME ===================================================================
 
 function sumTxns(list) {
   const t = { income: 0, expense: 0, mine: 0, theirs: 0, shared: 0, byCat: {} };
@@ -645,25 +925,9 @@ function dueIn(bill, month) {
 }
 const isPaid = (bill, month) => (bill.paidMonths || []).includes(monthKey(month));
 
-function homeView() {
-  const now = new Date();
-  const t = sumTxns(S.homeTxns);
-  const code = S.couple?.inviteCode || '';
-
-  const header = `<div class="page-head" style="padding-bottom:16px">
-      <div class="grow"><div class="muted">${greeting()},</div><h1 class="ellipsis">${esc(myName())}</h1></div>
-      <div class="avatars">${avatar(myName(), COLORS.me, 44)}${hasPartner() ? avatar(partnerName(), COLORS.partner, 44) : ''}</div>
-      <button class="icon-btn" data-action="tab" data-tab="settings" aria-label="Settings">${icon('settings')}</button>
-    </div>`;
-
-  const invite = hasPartner() ? '' : `<div class="card soft hstack">
-      <div style="font-size:26px">💌</div>
-      <div class="grow"><b>Invite your partner</b><div class="muted small">They sign up, tap "Join", and enter <b style="letter-spacing:2px">${esc(code)}</b></div></div>
-      <button class="icon-btn" data-action="share-code" aria-label="Share code">${icon('share')}</button>
-    </div>`;
-
+function moneyHero(t) {
   const pct = (v) => (t.expense > 0 ? (v / t.expense) * 100 : 0);
-  const hero = `<div class="hero">
+  return `<div class="hero">
       <div class="lite">This month together</div>
       <div class="big">${money(t.income - t.expense)}</div>
       <div class="lite">left after expenses</div>
@@ -682,13 +946,78 @@ function homeView() {
           <span><i class="dot" style="--c:#5EEAD4"></i>Shared ${moneyShort(t.shared)}</span>
         </div>` : ''}
     </div>`;
+}
+
+function locketHtml() {
+  // Partner's latest photo moment (like Locket). Falls back to your own.
+  const withPhoto = S.stories.filter((s) => s.photoId);
+  const pick = withPhoto.find((s) => !isMine(s.authorUid)) || withPhoto[0];
+  if (!pick) {
+    return `<div class="locket empty-state">
+      <div><div style="font-size:42px">📸</div>
+      <b style="display:block;margin:6px 0 4px">Share a moment</b>
+      <div class="muted small" style="margin-bottom:14px">Snap a photo and it shows up right here on ${hasPartner() ? esc(partnerName()) + "'s" : 'your partner\'s'} home screen.</div>
+      <button class="btn primary" data-action="snap">${icon('camera', 18)} Snap a moment</button></div>
+    </div>`;
+  }
+  const who = isMine(pick.authorUid) ? 'You' : partnerName();
+  return `<div class="locket">
+      ${photoImg(pick.photoId, 'locket-img')}
+      <div class="top">
+        <span class="pill">${esc(who)} · ${timeAgo(pick.createdAt)}</span>
+        <span class="grow"></span>
+        <button class="icon-btn" style="background:rgba(0,0,0,.42);color:#fff;width:36px;height:36px" data-action="save-photo" data-id="${esc(pick.photoId)}" aria-label="Save photo">${icon('download', 18)}</button>
+      </div>
+      <div class="over">
+        <div class="grow" style="font-weight:600;text-shadow:0 1px 6px rgba(0,0,0,.5)">${esc(pick.text || '')}</div>
+        <button class="snap" data-action="snap" aria-label="Snap a moment">${icon('camera', 22)}</button>
+      </div>
+    </div>`;
+}
+
+function homeView() {
+  const now = new Date();
+  const t = sumTxns(S.homeTxns);
+
+  const header = `<div class="page-head" style="padding-bottom:16px">
+      <div class="grow"><div class="muted">${greeting()},</div><h1 class="ellipsis">${esc(myName())}</h1></div>
+      <div class="avatars">${avatar(myName(), COLORS.me, 44)}${hasPartner() ? avatar(partnerName(), COLORS.partner, 44) : ''}</div>
+      <button class="icon-btn" data-action="tab" data-tab="settings" aria-label="Settings">${icon('settings')}</button>
+    </div>`;
+
+  let moneyPart = '';
+  if (prefs.homeMoney === 'card') moneyPart = moneyHero(t);
+  if (prefs.homeMoney === 'dashboard') {
+    const entries = Object.entries(t.byCat).sort((a, b) => b[1] - a[1]);
+    moneyPart = moneyHero(t) + (entries.length ? `<div class="card tap hstack" style="gap:16px" data-action="goto-overview">
+      ${donut(entries, t.expense, 96)}
+      <div class="grow"><b>Top spending</b>
+        ${entries.slice(0, 4).map(([n, v]) => `<div class="hstack small" style="gap:6px;margin-top:4px">
+          <i class="dot" style="--c:${catOf(n).color}"></i><span class="grow ellipsis">${esc(n)}</span><span class="muted">${moneyShort(v)}</span></div>`).join('')}
+        <div class="tiny" style="color:var(--primary);margin-top:6px;font-weight:600">Open money overview →</div>
+      </div></div>` : '');
+  }
 
   const quick = `<div class="quick">
       <button data-action="new-txn" data-type="expense"><span class="bubble" style="--c:${COLORS.expense}">−</span>Expense</button>
       <button data-action="new-txn" data-type="income"><span class="bubble" style="--c:${COLORS.income}">+</span>Income</button>
-      <button data-action="tab" data-tab="updates"><span class="bubble" style="--c:${COLORS.primary}">✏️</span>Update</button>
+      <button data-action="new-event"><span class="bubble" style="--c:${COLORS.primary}">📅</span>Plan</button>
       <button data-action="tab" data-tab="map"><span class="bubble" style="--c:${COLORS.partner}">📍</span>Check in</button>
     </div>`;
+
+  // Coming up (next 7 days)
+  const today = startOfDay(now);
+  const soon = S.events.filter((e) => !e.done && e.date >= today && daysBetween(today, e.date) <= 7).slice(0, 4);
+  const overdue = S.events.filter((e) => e.kind === 'todo' && !e.done && e.date < today).length;
+  const upcoming = (soon.length || overdue) ? `<div class="card">
+      <div class="hstack" style="margin-bottom:6px"><span>📅</span><b class="grow">Coming up</b>
+        <button class="btn link small" data-action="tab" data-tab="plan">See plan</button></div>
+      ${overdue ? `<div class="tiny" style="color:${COLORS.expense};margin:2px 0 6px;font-weight:600">${overdue} overdue to-do${overdue > 1 ? 's' : ''}</div>` : ''}
+      ${soon.map((e) => `<div class="row tap" style="padding:8px 0;cursor:pointer" data-action="open-day" data-date="${dateInputValue(e.date)}">
+          <span class="kind-ic" style="--c:${e.private ? COLORS.me : COLORS.shared}">${e.kind === 'todo' ? '✅' : '📅'}</span>
+          <span class="grow"><span class="ellipsis" style="display:block;font-weight:600">${esc(e.title)}</span><span class="tiny muted">${esc(eventWhen(e))}</span></span>
+          ${e.private ? tag('Just me', COLORS.me) : tag('Together', COLORS.shared)}</div>`).join('')}
+    </div>` : '';
 
   let partnerCard = '';
   if (hasPartner()) {
@@ -705,12 +1034,11 @@ function homeView() {
           <div class="grow"><b>${esc(partnerName())}</b><div class="muted small">${esc(status)}</div>${batt}</div>
           <span class="muted">${icon('right', 20)}</span>
         </div>
-        ${last ? `<div style="background:var(--bg);border-radius:14px;padding:10px 12px;margin-top:12px" class="ellipsis">
-          ${esc(last.mood || '💬')} ${esc(last.text || 'Checked in')} <span class="muted small">· ${timeAgo(last.createdAt)}</span></div>` : ''}
+        ${last ? `<div class="inset ellipsis" style="margin-top:12px">
+          ${esc(last.mood || '💬')} ${esc(last.text || (last.photoId ? 'Shared a photo' : 'Checked in'))} <span class="muted small">· ${timeAgo(last.createdAt)}</span></div>` : ''}
       </div>`;
   }
 
-  const today = startOfDay(now);
   const due = S.bills.filter((b) => !isPaid(b, now) && daysBetween(today, dueIn(b, now)) <= 7);
   const billsCard = due.length === 0 ? '' : `<div class="card tap" data-action="goto-bills">
       <div class="hstack" style="margin-bottom:6px"><span>🔔</span><b>Bills due soon</b></div>
@@ -735,10 +1063,10 @@ function homeView() {
       <div class="muted small">${until === 0 ? 'Happy anniversary today! 🎉' : `${until} days until your anniversary`}</div></div></div>`;
   }
 
-  return `<div class="page">${header}${invite}${hero}${quick}${partnerCard}${billsCard}${together}</div>`;
+  return `<div class="page">${header}${locketHtml()}${moneyPart}${quick}${upcoming}${partnerCard}${billsCard}${together}</div>`;
 }
 
-// ---------------------------------------------------------------- Money
+// ==== MONEY ==================================================================
 
 function moneyView() {
   const whoChips = [
@@ -748,10 +1076,10 @@ function moneyView() {
     ['shared', 'Shared', COLORS.shared],
   ].map(([k, label, c]) => `<button class="chip ${S.who === k ? 'on' : ''}" style="--c:${c}" data-action="who" data-who="${k}">${esc(label)}</button>`).join('');
 
-  const tabs = [['activity', 'Activity'], ['budgets', 'Budgets'], ['goals', 'Goals'], ['bills', 'Bills']]
+  const tabs = [['overview', 'Overview'], ['activity', 'Activity'], ['budgets', 'Budgets'], ['goals', 'Goals'], ['bills', 'Bills']]
     .map(([k, l]) => `<button class="${S.moneyTab === k ? 'on' : ''}" data-action="money-tab" data-mtab="${k}">${l}</button>`).join('');
 
-  const body = { activity: activityHtml, budgets: budgetsHtml, goals: goalsHtml, bills: billsHtml }[S.moneyTab]();
+  const body = { overview: overviewHtml, activity: activityHtml, budgets: budgetsHtml, goals: goalsHtml, bills: billsHtml }[S.moneyTab]();
 
   return `<div class="page">
     <div class="page-head"><h1>Money</h1></div>
@@ -766,7 +1094,7 @@ function moneyView() {
   </div>`;
 }
 
-function donut(entries, total) {
+function donut(entries, total, size = 120) {
   const r = 42, C = 2 * Math.PI * r;
   let off = 0;
   const segs = entries.map(([name, v]) => {
@@ -776,7 +1104,105 @@ function donut(entries, total) {
     off += len;
     return s;
   }).join('');
-  return `<svg viewBox="0 0 120 120" width="120" height="120" style="transform:rotate(-90deg);flex:none">${segs}</svg>`;
+  return `<svg viewBox="0 0 120 120" width="${size}" height="${size}" style="transform:rotate(-90deg);flex:none">${segs}</svg>`;
+}
+
+function categoryCard(t) {
+  const entries = Object.entries(t.byCat).sort((a, b) => b[1] - a[1]);
+  if (!entries.length) return '';
+  return `<div class="card hstack" style="gap:16px">
+      ${donut(entries, t.expense)}
+      <div class="grow"><b>Where it went</b>
+        ${entries.slice(0, 5).map(([n, v]) => `<div class="hstack small" style="gap:6px;margin-top:4px">
+          <i class="dot" style="--c:${catOf(n).color}"></i><span class="grow ellipsis">${esc(n)}</span>
+          <span class="muted">${Math.round((v / t.expense) * 100)}%</span></div>`).join('')}
+      </div></div>`;
+}
+
+function monthsSeries() {
+  const out = [];
+  for (let i = 5; i >= 0; i--) {
+    const m = new Date(S.month.getFullYear(), S.month.getMonth() - i, 1);
+    const xs = S.trendTxns.filter((x) => sameMonth(x.date, m) && whoMatch(x.shared, x.ownerUid));
+    const s = sumTxns(xs);
+    out.push({ m, income: s.income, expense: s.expense });
+  }
+  return out;
+}
+
+function barChart(series) {
+  const W = 330, H = 180, left = 44, bottom = 22, top = 10;
+  const plotH = H - bottom - top;
+  const max = Math.max(1, ...series.flatMap((s) => [s.income, s.expense]));
+  const gw = (W - left) / series.length;
+  const bw = Math.min(14, gw / 3);
+  const grid = [0, 0.5, 1].map((f) => {
+    const y = top + plotH * (1 - f);
+    return `<line class="grid" x1="${left}" x2="${W}" y1="${y}" y2="${y}"/><text x="${left - 6}" y="${y + 4}" text-anchor="end">${esc(moneyShort(max * f))}</text>`;
+  }).join('');
+  const bars = series.map((s, i) => {
+    const cx = left + gw * i + gw / 2;
+    const hi = (s.income / max) * plotH, he = (s.expense / max) * plotH;
+    return `<rect x="${cx - bw - 1}" y="${top + plotH - hi}" width="${bw}" height="${Math.max(hi, 0.5)}" rx="3" fill="${COLORS.income}"/>
+      <rect x="${cx + 1}" y="${top + plotH - he}" width="${bw}" height="${Math.max(he, 0.5)}" rx="3" fill="${COLORS.expense}"/>
+      <text x="${cx}" y="${H - 6}" text-anchor="middle" style="${sameMonth(s.m, S.month) ? 'font-weight:700;fill:var(--text)' : ''}">${fmtDate(s.m, { month: 'short' })}</text>`;
+  }).join('');
+  return `<svg class="chart" viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="Income and spending, last 6 months">${grid}${bars}</svg>`;
+}
+
+function overviewHtml() {
+  if (!S.loaded.txns || !S.loaded.trendTxns) return `<div class="spinner"></div>`;
+  const txns = S.txns.filter((x) => whoMatch(x.shared, x.ownerUid));
+  const t = sumTxns(txns);
+  const now = new Date();
+  const daysIn = new Date(S.month.getFullYear(), S.month.getMonth() + 1, 0).getDate();
+  const elapsed = sameMonth(S.month, now) ? now.getDate() : (S.month > now ? 0 : daysIn);
+  const avg = elapsed ? t.expense / elapsed : 0;
+  const saved = t.income - t.expense;
+  const rate = t.income > 0 ? Math.round((saved / t.income) * 100) : null;
+
+  const kpis = `<div class="stats four">
+      <div class="card"><span class="tiny muted">Income</span><b style="color:${COLORS.income}">${money(t.income)}</b></div>
+      <div class="card"><span class="tiny muted">Spent</span><b style="color:${COLORS.expense}">${money(t.expense)}</b></div>
+      <div class="card"><span class="tiny muted">Saved${rate !== null ? ` · ${rate}%` : ''}</span><b style="color:${saved >= 0 ? COLORS.primary : COLORS.expense}">${money(saved)}</b></div>
+      <div class="card"><span class="tiny muted">Average per day</span><b>${money(avg)}</b></div>
+    </div>`;
+
+  const trend = `<div class="card"><div class="hstack" style="margin-bottom:8px"><b class="grow">Last 6 months</b>
+      <span class="tiny"><i class="dot" style="--c:${COLORS.income}"></i>In</span><span class="tiny"><i class="dot" style="--c:${COLORS.expense}"></i>Out</span></div>
+      ${barChart(monthsSeries())}</div>`;
+
+  let whoCard = '';
+  if (S.who === 'all' && t.expense > 0) {
+    const rows = [['You', t.mine, COLORS.me], ...(hasPartner() ? [[partnerName(), t.theirs, COLORS.partner]] : []), ['Shared', t.shared, COLORS.shared]];
+    whoCard = `<div class="card"><b>Who spent</b>
+      ${rows.map(([n, v, c]) => `<div style="margin-top:10px"><div class="hstack small"><span class="grow">${esc(n)}</span><b>${money(v)}</b></div>
+        <div class="bar" style="margin:6px 0 0"><i style="--c:${c};width:${(v / t.expense) * 100}%"></i></div></div>`).join('')}</div>`;
+  }
+
+  const top = txns.filter((x) => !x.isIncome).sort((a, b) => b.amount - a.amount).slice(0, 5);
+  const topCard = top.length ? `<div class="section-title"><span>Biggest expenses</span></div><div class="card flush">${top.map(txnRow).join('')}</div>` : '';
+
+  const budgets = S.budgets.filter((b) => whoMatch(b.shared, b.ownerUid));
+  let health = '';
+  if (budgets.length) {
+    let over = 0, near = 0;
+    budgets.forEach((b) => { const r = b.limit > 0 ? spentFor(b, S.txns) / b.limit : 0; if (r >= 1) over++; else if (r >= 0.8) near++; });
+    health = `<div class="card tap hstack" data-action="money-tab" data-mtab="budgets"><span style="font-size:22px">${over ? '🚨' : near ? '⚠️' : '✅'}</span>
+      <div class="grow"><b>Budgets</b><div class="small muted">${over ? `${over} over limit` : near ? `${near} close to limit` : 'All within limits'} · ${budgets.length} total</div></div>${icon('right', 20)}</div>`;
+  }
+  const goals = S.goals.filter((g) => whoMatch(g.shared, g.ownerUid));
+  let goalsCard = '';
+  if (goals.length) {
+    const sv = goals.reduce((a, g) => a + g.saved, 0), tg = goals.reduce((a, g) => a + g.target, 0);
+    goalsCard = `<div class="card tap" data-action="money-tab" data-mtab="goals"><div class="hstack"><span style="font-size:22px">🎯</span><b class="grow">Savings goals</b><span class="small muted">${money(sv)} / ${money(tg)}</span></div>
+      <div class="bar"><i style="--c:${COLORS.primary};width:${tg ? Math.min(sv / tg, 1) * 100 : 0}%"></i></div></div>`;
+  }
+
+  if (!txns.length && !budgets.length && !goals.length) {
+    return kpis + trend + empty('📊', 'Add some income and expenses and your\noverview will fill up here.');
+  }
+  return kpis + trend + categoryCard(t) + whoCard + health + goalsCard + topCard;
 }
 
 function txnRow(x) {
@@ -789,13 +1215,6 @@ function txnRow(x) {
     </button>`;
 }
 
-function dayLabel(d) {
-  const diff = daysBetween(d, new Date());
-  if (diff === 0) return 'Today';
-  if (diff === 1) return 'Yesterday';
-  return fmtDate(d, { weekday: 'long', month: 'short', day: 'numeric' });
-}
-
 function activityHtml() {
   if (!S.loaded.txns) return `<div class="spinner"></div>`;
   const txns = S.txns.filter((x) => whoMatch(x.shared, x.ownerUid));
@@ -805,16 +1224,6 @@ function activityHtml() {
       <div class="card"><span class="tiny muted">Spent</span><b style="color:${COLORS.expense}">${money(t.expense)}</b></div>
       <div class="card"><span class="tiny muted">Left</span><b style="color:${COLORS.primary}">${money(t.income - t.expense)}</b></div>
     </div>`;
-
-  const entries = Object.entries(t.byCat).sort((a, b) => b[1] - a[1]);
-  const breakdown = entries.length === 0 ? '' : `<div class="card hstack" style="gap:16px">
-      ${donut(entries, t.expense)}
-      <div class="grow"><b>Where it went</b>
-        ${entries.slice(0, 5).map(([n, v]) => `<div class="hstack small" style="gap:6px;margin-top:4px">
-          <i class="dot" style="--c:${catOf(n).color}"></i><span class="grow ellipsis">${esc(n)}</span>
-          <span class="muted">${Math.round((v / t.expense) * 100)}%</span></div>`).join('')}
-      </div></div>`;
-
   if (txns.length === 0) return stats + empty('🧾', 'No entries yet for this month.\nTap + to add an income or expense.');
 
   const groups = new Map();
@@ -825,7 +1234,7 @@ function activityHtml() {
   }
   const list = [...groups.entries()].map(([k, xs]) =>
     `<div class="section-title"><span>${dayLabel(new Date(k))}</span></div><div class="card flush">${xs.map(txnRow).join('')}</div>`).join('');
-  return stats + breakdown + list;
+  return stats + categoryCard(t) + list;
 }
 
 function spentFor(b, txns) {
@@ -864,7 +1273,7 @@ function budgetsHtml() {
 function ring(progress, emoji, done) {
   const r = 25, C = 2 * Math.PI * r;
   return `<div class="ring"><svg viewBox="0 0 58 58" width="58" height="58">
-      <circle cx="29" cy="29" r="${r}" fill="none" stroke="#F4F7FB" stroke-width="6"/>
+      <circle cx="29" cy="29" r="${r}" fill="none" stroke="var(--card-2)" stroke-width="6"/>
       <circle cx="29" cy="29" r="${r}" fill="none" stroke="${done ? COLORS.income : COLORS.primary}" stroke-width="6" stroke-linecap="round"
         stroke-dasharray="${progress * C} ${C}"/></svg>${emoji}</div>`;
 }
@@ -905,52 +1314,82 @@ function billsHtml() {
     }).join('')}</div>`;
 }
 
-// ---------------------------------------------------------------- Updates
+// ==== PLAN (calendar + lists) ================================================
 
-function updatesShell() {
-  return `<div class="page">
-    <div class="page-head"><h1>Updates</h1></div>
-    <div class="card">
-      <div class="moods">${MOODS.map((m) => `<button class="mood ${S.mood === m ? 'on' : ''}" data-action="mood" data-mood="${m}">${m}</button>`).join('')}</div>
-      <form class="composer-row" data-form="post">
-        <textarea name="text" rows="2" placeholder="What's up? e.g. Pauwi na ako 🚌"></textarea>
-        <button class="icon-btn primary" type="submit" aria-label="Send">${icon('send', 20)}</button>
-      </form>
+function planHeader() {
+  return `<div class="page"><div class="page-head"><h1>Plan</h1></div>
+    <div class="seg">
+      <button class="${S.planTab === 'calendar' ? 'on' : ''}" data-action="plan-tab" data-ptab="calendar">📅 Calendar</button>
+      <button class="${S.planTab === 'lists' ? 'on' : ''}" data-action="plan-tab" data-ptab="lists">🛒 Lists</button>
+    </div>`;
+}
+
+const eventColor = (e) => (e.private ? COLORS.me : COLORS.shared);
+
+function eventRow(e, withDate = false) {
+  const todo = e.kind === 'todo';
+  return `<div class="row">
+    ${withDate ? `<span class="when">${esc(fmtDate(e.date, { month: 'short', day: 'numeric' }))}</span>` : ''}
+    ${todo ? `<input type="checkbox" class="check round" data-action="toggle-event" data-id="${e.id}" ${e.done ? 'checked' : ''} aria-label="Done">`
+      : `<span class="kind-ic" style="--c:${eventColor(e)}">📅</span>`}
+    <div class="grow tap" data-action="edit-event" data-id="${e.id}" style="cursor:pointer">
+      <div class="${e.done ? 'done-text' : ''}" style="font-weight:600">${esc(e.title)}</div>
+      <div class="hstack" style="gap:6px;margin-top:3px;flex-wrap:wrap">
+        ${e.private ? tag('Just me', COLORS.me) : tag('Together', COLORS.shared)}
+        <span class="tiny muted">${e.allDay ? 'All day' : fmtTime(e.date)}${e.remind >= 0 ? ' · 🔔' : ''}${!e.private && !isMine(e.createdBy) ? ` · by ${esc(partnerName())}` : ''}</span>
+      </div>
     </div>
-    <div id="feed"></div>
   </div>`;
 }
 
-function feedHtml() {
-  if (!S.loaded.posts) return `<div class="spinner"></div>`;
-  if (S.posts.length === 0) return empty('💬', `Share how your day is going.\n${hasPartner() ? partnerName() : 'Your partner'} will see it here.`);
-  return S.posts.map((p) => {
-    const mine = isMine(p.authorUid);
-    const name = mine ? myName() : partnerName();
-    const hearted = p.hearts.includes(uid());
-    const place = p.lat != null && p.lng != null
-      ? `<a class="btn link small" href="https://www.google.com/maps/search/?api=1&query=${p.lat},${p.lng}" target="_blank" rel="noopener">${icon('pin', 16)} View place</a>` : '';
-    return `<div class="card">
-      <div class="hstack">
-        ${avatar(name, mine ? COLORS.me : COLORS.partner, 34)}
-        <div class="grow"><b>${esc(name)}</b><div class="tiny muted">${timeAgo(p.createdAt)} · ${fmtTime(p.createdAt)}</div></div>
-        ${p.kind === 'checkin' ? tag('Check-in', COLORS.shared) : ''}
-        ${mine ? `<button class="icon-btn" data-action="del-post" data-id="${p.id}" aria-label="Delete">${icon('trash', 18)}</button>` : ''}
+function calendarHtml() {
+  const m = S.calMonth;
+  const today = startOfDay(new Date());
+  const firstDow = m.getDay();
+  const gridStart = new Date(m.getFullYear(), m.getMonth(), 1 - firstDow);
+  const byDay = new Map();
+  for (const e of S.events) {
+    const k = startOfDay(e.date).getTime();
+    if (!byDay.has(k)) byDay.set(k, []);
+    byDay.get(k).push(e);
+  }
+  const cells = [];
+  for (let i = 0; i < 42; i++) {
+    const d = new Date(gridStart.getFullYear(), gridStart.getMonth(), gridStart.getDate() + i);
+    if (i >= 35 && d.getMonth() !== m.getMonth()) break;
+    const evs = byDay.get(d.getTime()) || [];
+    const cls = ['cal-day', d.getMonth() !== m.getMonth() ? 'other' : '', sameDay(d, today) ? 'today' : '', sameDay(d, S.calDay) ? 'sel' : ''].join(' ');
+    const dots = evs.slice(0, 3).map((e) => `<i style="--c:${e.done ? 'var(--muted)' : eventColor(e)}"></i>`).join('');
+    cells.push(`<button class="${cls}" data-action="pick-day" data-date="${dateInputValue(d)}">${d.getDate()}<span class="dots">${dots}</span></button>`);
+  }
+  const wd = ['S', 'M', 'T', 'W', 'T', 'F', 'S'].map((x) => `<div class="wd">${x}</div>`).join('');
+
+  const dayEvents = byDay.get(S.calDay.getTime()) || [];
+  const upcoming = S.events.filter((e) => !e.done && e.date >= today && daysBetween(today, e.date) <= 14 && !sameDay(e.date, S.calDay)).slice(0, 8);
+  const overdue = S.events.filter((e) => e.kind === 'todo' && !e.done && e.date < today);
+
+  return `
+    <div class="card" style="padding:12px">
+      <div class="month-bar" style="margin-bottom:4px">
+        <button class="icon-btn" data-action="cal-month" data-delta="-1" aria-label="Previous month">${icon('left')}</button>
+        <h2>${fmtDate(m, { month: 'long', year: 'numeric' })}</h2>
+        <button class="icon-btn" data-action="cal-month" data-delta="1" aria-label="Next month">${icon('right')}</button>
       </div>
-      <div class="post-body">${p.mood ? `<span class="m">${esc(p.mood)}</span>` : ''}<p>${esc(p.text)}</p></div>
-      <div class="hstack" style="gap:0">${place}<span class="grow"></span>
-        <button class="icon-btn heart ${hearted ? 'on' : ''}" data-action="heart" data-id="${p.id}" aria-label="Love">${icon('heart', 20)}</button>
-        ${p.hearts.length ? `<span class="muted small">${p.hearts.length}</span>` : ''}
+      <div class="cal">${wd}${cells.join('')}</div>
+      <div class="legend" style="color:var(--muted);justify-content:center;margin-top:10px">
+        <span><i class="dot" style="--c:${COLORS.shared}"></i>Together</span><span><i class="dot" style="--c:${COLORS.me}"></i>Just me</span>
+        ${sameMonth(m, today) ? '' : '<button class="btn link small" data-action="cal-today" style="padding:0 4px">Back to today</button>'}
       </div>
-    </div>`;
-  }).join('');
+    </div>
+    <div class="section-title"><span>${esc(dayLabel(S.calDay))}</span><button class="btn link small" data-action="new-event">${icon('plus', 16)} Add</button></div>
+    ${dayEvents.length ? `<div class="card flush">${dayEvents.map((e) => eventRow(e)).join('')}</div>` : `<div class="card muted small center">Nothing planned. Tap + to add a to-do or event.</div>`}
+    ${overdue.length ? `<div class="section-title"><span style="color:${COLORS.expense}">Overdue to-dos</span></div><div class="card flush">${overdue.map((e) => eventRow(e, true)).join('')}</div>` : ''}
+    ${upcoming.length ? `<div class="section-title"><span>Coming up</span></div><div class="card flush">${upcoming.map((e) => eventRow(e, true)).join('')}</div>` : ''}
+  </div>`;
 }
 
-// ---------------------------------------------------------------- Lists
-
 function listsShell() {
-  return `<div class="page">
-    <div class="page-head"><h1>Lists</h1></div>
+  return `
     <div class="seg">${LISTS.map(([n, e]) => `<button class="${S.listName === n ? 'on' : ''}" data-action="list-tab" data-list="${n}">${e} ${n}</button>`).join('')}</div>
     <form class="hstack" data-form="item" style="margin-bottom:12px">
       <input name="text" class="grow" placeholder="${S.listName === 'Groceries' ? 'Add item, e.g. Eggs (1 tray)' : 'Add a task'}" autocomplete="off">
@@ -964,7 +1403,7 @@ function itemRow(i) {
   return `<div class="row">
     <input type="checkbox" class="check" data-action="toggle-item" data-id="${i.id}" ${i.done ? 'checked' : ''} aria-label="Done">
     <span class="grow ${i.done ? 'done-text' : ''}" style="word-break:break-word">${esc(i.text)}</span>
-    <i class="dot" style="--c:${isMine(i.addedBy) ? COLORS.me : COLORS.partner};margin:0" title="Added by ${esc(nameOf(i.addedBy))}"></i>
+    <i class="dot" style="--c:${colorOf(i.addedBy)};margin:0" title="Added by ${esc(nameOf(i.addedBy))}"></i>
     <button class="icon-btn" data-action="del-item" data-id="${i.id}" aria-label="Delete">${icon('trash', 18)}</button>
   </div>`;
 }
@@ -980,52 +1419,132 @@ function listItemsHtml() {
       <div class="card flush">${done.map(itemRow).join('')}</div>` : '');
 }
 
-// ---------------------------------------------------------------- Settings
+// ==== CHAT ===================================================================
 
-function settingsView() {
-  const code = S.couple?.inviteCode || '';
-  const anniv = S.couple?.anniversary ? toDate(S.couple.anniversary) : null;
+function chatShell() {
+  return `<div class="chat-head" id="chatHead"></div>
+    <div class="msgs" id="msgs"></div>
+    <div class="chat-bar">
+      <form data-form="chat">
+        <label class="icon-btn soft" aria-label="Send a photo" style="cursor:pointer">${icon('image', 20)}
+          <input type="file" accept="image/*" data-change="chat-photo" hidden></label>
+        <textarea name="text" rows="1" placeholder="Message…" autocomplete="off"></textarea>
+        <button class="icon-btn primary" type="submit" aria-label="Send">${icon('send', 20)}</button>
+      </form>
+    </div>`;
+}
+
+function chatHeadHtml() {
+  if (!hasPartner()) return `<b class="grow">Chat</b>`;
+  const loc = S.locs[S.partner.uid];
+  const lastTheirs = [...S.messages].reverse().find((m) => !isMine(m.from));
+  const times = [loc?.updatedAt, lastTheirs?.createdAt].filter(Boolean).map((d) => d.getTime());
+  const active = times.length ? `Active ${timeAgo(new Date(Math.max(...times)))}` : '';
+  return `${avatar(partnerName(), COLORS.partner, 40)}<div class="grow"><b>${esc(partnerName())}</b><div class="tiny muted">${esc(active)}</div></div>`;
+}
+
+function messagesHtml() {
+  if (!hasPartner()) return empty('💌', 'Invite your partner first.\nYou can find your invite code in Settings.');
+  if (!S.loaded.messages) return `<div class="spinner"></div>`;
+  if (!S.messages.length) return empty('💬', `Say hi to ${partnerName()}! 👋`);
+  let lastDay = null;
+  const out = [];
+  const lastMine = [...S.messages].reverse().find((m) => isMine(m.from));
+  S.messages.forEach((m, i) => {
+    const day = startOfDay(m.createdAt).getTime();
+    if (day !== lastDay) { out.push(`<div class="day-sep">${esc(dayLabel(m.createdAt))}</div>`); lastDay = day; }
+    const mine = isMine(m.from);
+    const next = S.messages[i + 1];
+    const showMeta = !next || next.from !== m.from || next.createdAt - m.createdAt > 5 * 60000;
+    const seen = mine && m === lastMine && hasPartner() && m.seenBy.includes(S.partner.uid);
+    out.push(`<div class="msg ${mine ? 'me' : 'them'}">
+      ${m.photoId ? photoImg(m.photoId) : ''}
+      ${m.text ? `<div class="b"${m.photoId ? ' style="margin-top:4px"' : ''}>${esc(m.text)}</div>` : ''}
+      ${showMeta || seen ? `<div class="meta">${fmtTime(m.createdAt)}${seen ? ' · Seen ✓✓' : ''}</div>` : ''}
+    </div>`);
+  });
+  return out.join('');
+}
+
+// ==== MOMENTS (posts + stories) ==============================================
+
+function momentsShell() {
   return `<div class="page">
-    <div class="page-head"><button class="icon-btn" data-action="tab" data-tab="home" aria-label="Back">${icon('back')}</button><h1>Settings</h1></div>
-
-    <div class="section-title"><span>Profile</span></div>
-    <div class="card flush">
-      <button class="row" data-action="edit-name">${avatar(myName(), COLORS.me, 36)}
-        <span class="grow"><b>${esc(myName())}</b><div class="tiny muted">${esc(S.me?.email || '')}</div></span>${icon('edit', 18)}</button>
-      ${hasPartner() ? `<div class="row">${avatar(partnerName(), COLORS.partner, 36)}<span class="grow"><b>${esc(partnerName())}</b><div class="tiny muted">Your partner</div></span></div>` : ''}
-    </div>
-
-    <div class="section-title"><span>Our space</span></div>
-    <div class="card flush">
-      ${hasPartner() ? '' : `<button class="row" data-action="share-code">
-        <span class="cat-bubble" style="--c:${COLORS.primary}">🔑</span>
-        <span class="grow"><b>Invite code</b><div style="letter-spacing:3px;font-weight:800">${esc(code)}</div></span>${icon('share', 18)}</button>`}
-      <label class="row"><span class="cat-bubble" style="--c:${COLORS.partner}">💙</span>
-        <span class="grow"><b>Anniversary</b><div class="tiny muted">For your days-together counter</div></span>
-        <input type="date" data-change="anniv" value="${anniv ? dateInputValue(anniv) : ''}" max="${dateInputValue(new Date())}" style="width:auto;padding:8px 10px"></label>
-      <label class="row"><span class="cat-bubble" style="--c:${COLORS.income}">💰</span>
-        <span class="grow"><b>Currency</b></span>
-        <select data-change="currency" style="width:auto;padding:8px 12px">
-          ${CURRENCIES.map((c) => `<option ${c === cur() ? 'selected' : ''}>${esc(c)}</option>`).join('')}
-        </select></label>
-    </div>
-
-    <div class="section-title"><span>Privacy</span></div>
+    <div class="page-head"><h1>Moments</h1></div>
+    <div class="stories" id="stories"></div>
     <div class="card">
-      <label class="switch-row" style="padding:0">
-        <span class="grow"><b>Share my location</b><small>Only your partner can see it. Updates while OurNest is open.</small></span>
-        <input type="checkbox" class="switch" data-change="sharing" ${S.me?.shareLocation ? 'checked' : ''}>
-      </label>
+      <div class="moods">${MOODS.map((m) => `<button class="mood ${S.mood === m ? 'on' : ''}" data-action="mood" data-mood="${m}">${m}</button>`).join('')}</div>
+      <form data-form="post">
+        <div class="composer-row">
+          <textarea name="text" rows="2" placeholder="What's on your mind? e.g. Pauwi na ako 🚌"></textarea>
+        </div>
+        <div id="postPreview">${postPreviewHtml()}</div>
+        <div class="hstack" style="margin-top:10px">
+          <label class="btn sm" style="cursor:pointer">${icon('image', 18)} Photo<input type="file" accept="image/*" data-change="post-photo" hidden></label>
+          <span class="grow"></span>
+          <button class="btn sm primary" type="submit">${icon('send', 16)} Post</button>
+        </div>
+      </form>
     </div>
-
-    <div class="section-title"><span>About</span></div>
-    <div class="card muted small">OurNest saves everything on your phone first, so it works without internet.
-      When you're back online, your changes sync to your partner automatically.</div>
-    <button class="btn block danger" data-action="signout" style="margin-top:6px">${icon('logout', 18)} Sign out</button>
+    <div id="feed"></div>
   </div>`;
 }
 
-// ---------------------------------------------------------------- Map
+function postPreviewHtml() {
+  return S.postPhoto ? `<div class="thumb"><img src="${S.postPhoto}" alt=""><button type="button" data-action="clear-post-photo" aria-label="Remove">×</button></div>` : '';
+}
+
+const activeStories = (owner) => S.stories
+  .filter((s) => s.authorUid === owner && Date.now() - s.createdAt.getTime() < STORY_HOURS * 3600000)
+  .sort((a, b) => a.createdAt - b.createdAt);
+
+function storyBubble(owner, label, color) {
+  const list = activeStories(owner);
+  if (!list.length) return '';
+  const unseen = !isMine(owner) && list.some((s) => !s.seenBy.includes(uid()));
+  const latest = list[list.length - 1];
+  const inner = latest.photoId ? photoImg(latest.photoId, '', false) : `<span style="background:${esc(latest.bg || color)};width:100%;height:100%;display:grid;place-items:center;color:#fff;font-size:20px">Aa</span>`;
+  return `<button class="story" data-action="open-stories" data-owner="${owner}">
+      <span class="ring-o ${unseen ? 'new' : ''}"><div>${inner}</div></span>${esc(label)}</button>`;
+}
+
+function storiesBarHtml() {
+  const add = `<button class="story" data-action="new-story"><span class="ring-o"><div style="color:var(--primary)">${icon('camera', 24)}</div><span class="plus">+</span></span>Add story</button>`;
+  return add + storyBubble(uid(), 'You', COLORS.me) + (hasPartner() ? storyBubble(S.partner.uid, partnerName(), COLORS.partner) : '');
+}
+
+function feedHtml() {
+  if (!S.loaded.posts) return `<div class="spinner"></div>`;
+  if (S.posts.length === 0) return empty('💬', `Share how your day is going.\n${hasPartner() ? partnerName() : 'Your partner'} will see it here.`);
+  return S.posts.map((p) => {
+    const mine = isMine(p.authorUid);
+    const name = mine ? myName() : partnerName();
+    const hearted = p.hearts.includes(uid());
+    const place = p.lat != null && p.lng != null
+      ? `<a class="btn link small" style="padding:4px 0" href="https://www.google.com/maps/search/?api=1&query=${p.lat},${p.lng}" target="_blank" rel="noopener">${icon('pin', 16)} View place</a>` : '';
+    const lastComments = p.comments.slice(-2);
+    return `<div class="card">
+      <div class="hstack">
+        ${avatar(name, mine ? COLORS.me : COLORS.partner, 38)}
+        <div class="grow"><b>${esc(name)}</b><div class="tiny muted">${timeAgo(p.createdAt)} · ${fmtTime(p.createdAt)}</div></div>
+        ${p.kind === 'checkin' ? tag('Check-in', COLORS.shared) : ''}
+        ${mine ? `<button class="icon-btn" data-action="del-post" data-id="${p.id}" aria-label="Delete">${icon('trash', 18)}</button>` : ''}
+      </div>
+      ${(p.mood || p.text) ? `<div class="post-body">${p.mood ? `<span class="m">${esc(p.mood)}</span>` : ''}<p>${esc(p.text)}</p></div>` : '<div style="height:10px"></div>'}
+      ${p.photoId ? photoImg(p.photoId) : ''}
+      ${place}
+      ${(p.hearts.length || p.comments.length) ? `<div class="tiny muted" style="margin-top:8px">${p.hearts.length ? `❤️ ${p.hearts.length}` : ''}${p.hearts.length && p.comments.length ? ' · ' : ''}${p.comments.length ? `${p.comments.length} comment${p.comments.length > 1 ? 's' : ''}` : ''}</div>` : ''}
+      <div class="post-actions">
+        <button class="heart ${hearted ? 'on' : ''}" data-action="heart" data-id="${p.id}">${icon('heart', 18)} Love</button>
+        <button data-action="comments" data-id="${p.id}">${icon('comment', 18)} Comment</button>
+      </div>
+      ${lastComments.map((c) => `<div class="comment">${avatar(nameOf(c.by), colorOf(c.by), 28)}
+        <div class="inset small"><b>${esc(isMine(c.by) ? myName() : partnerName())}</b> ${esc(c.text)}</div></div>`).join('')}
+    </div>`;
+  }).join('');
+}
+
+// ==== PLACES (map) ===========================================================
 
 let leafletMap = null;
 const mapMarkers = {};
@@ -1099,15 +1618,104 @@ function renderMap() {
     <div class="chips scroll">${CHECKINS.map(([e, l]) => `<button class="chip" data-action="checkin" data-emoji="${e}" data-label="${esc(l)}">${e} ${esc(l)}</button>`).join('')}</div>`;
 }
 
-// -----------------------------------------------------------------------------
-// Sheets (pop-up editors)
-// -----------------------------------------------------------------------------
+// ==== SETTINGS VIEW ==========================================================
+
+function segChoice(action, value, options) {
+  return `<div class="seg" style="margin:0">${options.map(([v, l]) => `<button class="${value === v ? 'on' : ''}" data-action="${action}" data-value="${v}">${l}</button>`).join('')}</div>`;
+}
+
+function settingsView() {
+  const code = S.couple?.inviteCode || '';
+  const anniv = S.couple?.anniversary ? toDate(S.couple.anniversary) : null;
+  const notifSupported = 'Notification' in window;
+  const notifOn = prefs.notify && notifSupported && Notification.permission === 'granted';
+  const standalone = window.matchMedia?.('(display-mode: standalone)').matches || navigator.standalone;
+
+  return `<div class="page">
+    <div class="page-head"><button class="icon-btn" data-action="tab" data-tab="home" aria-label="Back">${icon('back')}</button><h1>Settings</h1></div>
+
+    ${hasPartner() ? '' : `<div class="card soft">
+      <div class="hstack"><div style="font-size:26px">💌</div>
+        <div class="grow"><b>Invite your partner</b><div class="muted small">They sign up, tap "Join", and enter this code:</div></div></div>
+      <div class="hstack" style="margin-top:12px">
+        <div class="grow" style="font-size:26px;font-weight:800;letter-spacing:6px">${esc(code)}</div>
+        <button class="btn primary sm" data-action="share-code">${icon('share', 16)} Share</button>
+      </div></div>`}
+
+    <div class="section-title"><span>Profile</span></div>
+    <div class="card flush">
+      <button class="row" data-action="edit-name">${avatar(myName(), COLORS.me, 36)}
+        <span class="grow"><b>${esc(myName())}</b><div class="tiny muted">${esc(S.me?.email || '')}</div></span>${icon('edit', 18)}</button>
+      ${hasPartner() ? `<div class="row">${avatar(partnerName(), COLORS.partner, 36)}<span class="grow"><b>${esc(partnerName())}</b><div class="tiny muted">Your partner</div></span></div>` : ''}
+    </div>
+
+    <div class="section-title"><span>Appearance</span></div>
+    <div class="card">
+      <div class="label">Theme</div>
+      ${segChoice('set-theme', prefs.theme, [['light', '☀️ Light'], ['dark', '🌙 Dark'], ['auto', '⚙️ Auto']])}
+      <div class="label" style="margin-top:14px">Money on Home</div>
+      ${segChoice('set-home-money', prefs.homeMoney, [['card', 'Summary'], ['dashboard', 'Dashboard'], ['hidden', 'Hide']])}
+    </div>
+
+    <div class="section-title"><span>Notifications</span></div>
+    <div class="card">
+      <label class="switch-row" style="padding:0">
+        <span class="grow"><b>🔔 Reminders & messages</b><small>Pop-up alerts for your to-dos, events and new chats on this phone.</small></span>
+        <input type="checkbox" class="switch" data-change="notify" ${notifOn ? 'checked' : ''} ${notifSupported ? '' : 'disabled'}>
+      </label>
+      ${notifSupported ? '' : '<div class="tiny muted" style="margin-top:8px">On iPhone, add OurNest to your Home Screen first, then turn this on.</div>'}
+    </div>
+
+    <div class="section-title"><span>Our space</span></div>
+    <div class="card flush">
+      ${hasPartner() ? `<button class="row" data-action="share-code">
+        <span class="cat-bubble" style="--c:${COLORS.primary}">🔑</span>
+        <span class="grow"><b>Invite code</b><div class="tiny muted">${esc(code)} · already paired 💙</div></span></button>` : ''}
+      <label class="row"><span class="cat-bubble" style="--c:${COLORS.partner}">💙</span>
+        <span class="grow"><b>Anniversary</b><div class="tiny muted">For your days-together counter</div></span>
+        <input type="date" data-change="anniv" value="${anniv ? dateInputValue(anniv) : ''}" max="${dateInputValue(new Date())}" style="width:auto;padding:8px 10px"></label>
+      <label class="row"><span class="cat-bubble" style="--c:${COLORS.income}">💰</span>
+        <span class="grow"><b>Currency</b></span>
+        <select data-change="currency" style="width:auto;padding:8px 12px">
+          ${CURRENCIES.map((c) => `<option ${c === cur() ? 'selected' : ''}>${esc(c)}</option>`).join('')}
+        </select></label>
+    </div>
+
+    <div class="section-title"><span>Privacy</span></div>
+    <div class="card">
+      <label class="switch-row" style="padding:0">
+        <span class="grow"><b>Share my location</b><small>Only your partner can see it. Updates while OurNest is open.</small></span>
+        <input type="checkbox" class="switch" data-change="sharing" ${S.me?.shareLocation ? 'checked' : ''}>
+      </label>
+    </div>
+
+    <div class="section-title"><span>Phone home screen</span></div>
+    <div class="card">
+      ${standalone ? '<b>✅ OurNest is installed on this phone.</b>'
+        : deferredInstall ? `<button class="btn primary block" data-action="install">${icon('download', 18)} Install OurNest app</button>`
+        : '<b>Add OurNest to your home screen</b><div class="small muted" style="margin-top:4px">Android: Chrome menu ⋮ → <b>Add to Home screen</b>. iPhone: Safari → Share → <b>Add to Home Screen</b>.</div>'}
+      <div class="small muted" style="margin-top:10px;line-height:1.5">
+        <b style="color:var(--text)">Shortcuts:</b> on Android, press and hold the OurNest icon for quick shortcuts —
+        📸 Snap a moment, ➕ Add expense, 📅 Plan and 💬 Chat. You can drag a shortcut onto your home screen.<br>
+        <b style="color:var(--text)">Photo on your lock/home screen:</b> tap ⤓ on the moment photo on Home to save it, then set it as your wallpaper.
+      </div>
+    </div>
+
+    <div class="section-title"><span>About</span></div>
+    <div class="card muted small">OurNest saves everything on your phone first, so it works without internet.
+      When you're back online, your changes sync to your partner automatically.</div>
+    <button class="btn block danger" data-action="signout" style="margin-top:6px">${icon('logout', 18)} Sign out</button>
+  </div>`;
+}
+
+// ==== SHEETS (pop-up editors) ================================================
 
 function openSheet(html) {
   const m = $('#modal');
   m.innerHTML = `<div class="backdrop" data-action="close-modal"></div><div class="sheet" role="dialog" aria-modal="true">${html}</div>`;
   m.hidden = false;
   document.body.classList.add('noscroll');
+  hydratePhotos();
 }
 function closeSheet() {
   const m = $('#modal');
@@ -1115,6 +1723,7 @@ function closeSheet() {
   m.innerHTML = '';
   document.body.classList.remove('noscroll');
   if (askResolve) { const r = askResolve; askResolve = null; r(false); }
+  if (reminderQueue.length) setTimeout(showReminderPopup, 300);
 }
 function ask(title, body, yes = 'Yes') {
   return new Promise((resolve) => {
@@ -1212,6 +1821,44 @@ function openBillSheet(b) {
     </form>`);
 }
 
+function openEventSheet(e, day) {
+  const d = e?.date || (() => { const x = new Date(day || S.calDay); const n = new Date(); x.setHours(n.getHours() + 1, 0, 0, 0); return x; })();
+  const kind = e?.kind || 'event';
+  const isPrivate = e ? !!e.private : false;
+  const allDay = e ? !!e.allDay : false;
+  const remind = e ? e.remind : 60;
+  const canDelete = e && (isMine(e.createdBy) || !e.private);
+  openSheet(`${sheetHead(e ? 'Edit plan' : 'New plan', canDelete ? 'delete-event' : '', e?.id)}
+    <form data-form="event" data-id="${e?.id || ''}">
+      <div class="seg">
+        <button type="button" class="${kind === 'event' ? 'on' : ''}" data-action="pick" data-name="kind" data-value="event">📅 Event</button>
+        <button type="button" class="${kind === 'todo' ? 'on' : ''}" data-action="pick" data-name="kind" data-value="todo">✅ To-do</button>
+      </div>
+      <input type="hidden" name="kind" value="${kind}">
+      <label class="field"><span>What</span><input name="title" value="${esc(e?.title || '')}" placeholder="e.g. Dinner with family, Pay Meralco" autocomplete="off"></label>
+      <div class="label">Who is it for?</div>
+      <div class="chips" style="margin-bottom:14px">
+        ${pickChips('scope', [
+          { value: 'together', label: '💑 Together', color: COLORS.shared },
+          { value: 'me', label: '🙋 Just me', color: COLORS.me },
+        ], isPrivate ? 'me' : 'together')}
+      </div>
+      <input type="hidden" name="scope" value="${isPrivate ? 'me' : 'together'}">
+      <div class="two">
+        <label class="field"><span>Date</span><input type="date" name="date" value="${dateInputValue(d)}"></label>
+        <label class="field" id="timeField" ${allDay ? 'hidden' : ''}><span>Time</span><input type="time" name="time" value="${timeInputValue(d)}"></label>
+      </div>
+      <label class="switch-row" style="padding-top:0"><span class="grow"><b>All day</b></span>
+        <input type="checkbox" class="switch" name="allDay" data-change="allday" ${allDay ? 'checked' : ''}></label>
+      <label class="field"><span>Remind me</span>
+        <select name="remind">${REMIND_OPTIONS.map(([v, l]) => `<option value="${v}" ${v === remind ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
+      <div class="tiny muted" style="margin:-6px 2px 12px">🔔 Only you get the reminder for plans you add.</div>
+      <label class="field"><span>Notes (optional)</span><textarea name="notes" rows="2">${esc(e?.notes || '')}</textarea></label>
+      <button class="btn primary block" type="submit">Save</button>
+    </form>`);
+  if (!e) setTimeout(() => $('#modal input[name=title]')?.focus(), 80);
+}
+
 function openNameSheet() {
   openSheet(`<h3 style="margin-bottom:14px">Your name</h3>
     <form data-form="name"><input name="name" value="${esc(myName())}" autocomplete="name">
@@ -1219,9 +1866,119 @@ function openNameSheet() {
   setTimeout(() => $('#modal input[name=name]')?.focus(), 80);
 }
 
-// -----------------------------------------------------------------------------
-// Toast
-// -----------------------------------------------------------------------------
+function openComments(postId) {
+  const p = S.posts.find((x) => x.id === postId);
+  if (!p) return;
+  openSheet(`<div class="sheet-head"><h3>Comments</h3></div>
+    ${p.comments.length ? p.comments.map((c) => `<div class="comment">${avatar(nameOf(c.by), colorOf(c.by), 30)}
+      <div class="inset small grow"><b>${esc(isMine(c.by) ? myName() : partnerName())}</b> ${esc(c.text)}
+      <div class="tiny muted" style="margin-top:2px">${timeAgo(toDate(c.at))}</div></div></div>`).join('')
+      : '<div class="muted small center" style="padding:10px">No comments yet.</div>'}
+    <form data-form="comment" data-id="${p.id}" class="hstack" style="margin-top:14px">
+      <input name="text" class="grow" placeholder="Write a comment…" autocomplete="off">
+      <button class="icon-btn primary" type="submit" aria-label="Send">${icon('send', 18)}</button>
+    </form>`);
+  setTimeout(() => $('#modal input[name=text]')?.focus(), 80);
+}
+
+// Story composer (photo or text). Also used by the Home "Snap" button.
+let storyDraft = { photo: null, bg: STORY_BGS[0] };
+function openStorySheet(photo = null) {
+  storyDraft = { photo, bg: storyDraft.bg || STORY_BGS[0] };
+  openSheet(`<div class="sheet-head"><h3>${photo ? 'Share this moment' : 'New story'}</h3></div>
+    <form data-form="story">
+      <div id="storyPreview">${storyPreviewHtml()}</div>
+      <label class="field" style="margin-top:12px"><span>${photo ? 'Caption (optional)' : 'Your message'}</span>
+        <input name="text" maxlength="140" placeholder="${photo ? 'e.g. Miss you 💙' : 'Type something sweet…'}" autocomplete="off" data-input="story-text"></label>
+      <div class="hstack" style="margin-bottom:12px">
+        <label class="btn sm" style="cursor:pointer">${icon('camera', 18)} ${photo ? 'Retake' : 'Add photo'}<input type="file" accept="image/*" capture="environment" data-change="story-photo" hidden></label>
+        <label class="btn sm" style="cursor:pointer">${icon('image', 18)} Gallery<input type="file" accept="image/*" data-change="story-photo" hidden></label>
+      </div>
+      <div class="tiny muted" style="margin-bottom:12px">Stories show for ${STORY_HOURS} hours. Photos also appear on Home.</div>
+      <button class="btn primary block" type="submit">${icon('send', 18)} Share</button>
+    </form>`);
+}
+function storyPreviewHtml() {
+  if (storyDraft.photo) return `<img src="${storyDraft.photo}" alt="" style="width:100%;max-height:320px;object-fit:cover;border-radius:18px">`;
+  return `<div id="textStory" style="background:${storyDraft.bg};color:#fff;border-radius:18px;min-height:180px;display:grid;place-items:center;padding:20px;font-size:22px;font-weight:800;text-align:center">Aa</div>
+    <div class="hstack" style="margin-top:10px;gap:8px">${STORY_BGS.map((c) => `<button type="button" class="swatch ${c === storyDraft.bg ? 'on' : ''}" style="background:${c}" data-action="story-bg" data-color="${c}" aria-label="Colour"></button>`).join('')}</div>`;
+}
+
+// ==== VIEWERS (full-screen photo + stories) ==================================
+
+function closeViewer() {
+  const v = $('#viewer');
+  clearTimeout(storyTimer);
+  v.hidden = true;
+  v.innerHTML = '';
+  if ($('#modal').hidden) document.body.classList.remove('noscroll');
+  if (reminderQueue.length) setTimeout(showReminderPopup, 300);
+}
+
+function openPhotoViewer(photoId) {
+  const v = $('#viewer');
+  v.innerHTML = `<div class="viewer">
+    <div class="head"><span class="grow"></span>
+      <button class="icon-btn" data-action="save-photo" data-id="${esc(photoId)}" aria-label="Save">${icon('download')}</button>
+      <button class="icon-btn" data-action="close-viewer" aria-label="Close">${icon('close')}</button></div>
+    <div class="stage" data-action="close-viewer">${photoImg(photoId, '', false)}</div></div>`;
+  v.hidden = false;
+  document.body.classList.add('noscroll');
+  hydratePhotos();
+}
+
+let storyState = { list: [], i: 0 };
+let storyTimer = null;
+function openStories(owner) {
+  const list = activeStories(owner);
+  if (!list.length) return;
+  const firstUnseen = list.findIndex((s) => !s.seenBy.includes(uid()));
+  storyState = { list, i: isMine(owner) || firstUnseen < 0 ? 0 : firstUnseen };
+  $('#viewer').hidden = false;
+  document.body.classList.add('noscroll');
+  showStory();
+}
+function showStory() {
+  clearTimeout(storyTimer);
+  const { list, i } = storyState;
+  const s = list[i];
+  if (!s) { closeViewer(); return; }
+  const mine = isMine(s.authorUid);
+  if (!mine && !s.seenBy.includes(uid())) { s.seenBy.push(uid()); patch('stories', s.id, { seenBy: arrayUnion(uid()) }); }
+  const name = mine ? myName() : partnerName();
+  const seenByPartner = mine && hasPartner() && s.seenBy.includes(S.partner.uid);
+  const dur = s.photoId ? 6 : 5;
+  $('#viewer').innerHTML = `<div class="viewer" style="--dur:${dur}s">
+    <div class="bars">${list.map((_, j) => `<i class="${j < i ? 'done' : j === i ? 'now' : ''}"><b></b></i>`).join('')}</div>
+    <div class="head">${avatar(name, colorOf(s.authorUid), 34)}<div class="grow"><b>${esc(name)}</b><div class="tiny" style="opacity:.75">${timeAgo(s.createdAt)}</div></div>
+      ${mine ? `<button class="icon-btn" data-action="del-story" data-id="${s.id}" aria-label="Delete">${icon('trash')}</button>` : ''}
+      <button class="icon-btn" data-action="close-viewer" aria-label="Close">${icon('close')}</button></div>
+    <div class="stage">
+      ${s.photoId ? photoImg(s.photoId, '', false) : `<div class="text-story" style="background:${esc(s.bg || COLORS.primary)}">${esc(s.text)}</div>`}
+      ${s.photoId && s.text ? `<div class="caption">${esc(s.text)}</div>` : ''}
+      <div class="tap-l" data-action="story-prev"></div><div class="tap-r" data-action="story-next"></div>
+    </div>
+    <div class="foot">${mine ? `<span class="small" style="opacity:.8">${seenByPartner ? `Seen by ${esc(partnerName())} ✓` : 'Not seen yet'}</span>`
+      : `${s.photoId ? `<button class="btn sm" data-action="save-photo" data-id="${esc(s.photoId)}">${icon('download', 16)} Save</button>` : ''}
+         <button class="btn sm" data-action="story-love" data-id="${s.id}">❤️ Love</button>`}</div>
+  </div>`;
+  hydratePhotos();
+  storyTimer = setTimeout(() => { storyState.i++; showStory(); }, dur * 1000);
+}
+
+function savePhotoToDevice(photoId) {
+  const data = photoCache.get(photoId);
+  if (!data) { toast('Photo is still loading…'); return; }
+  const a = document.createElement('a');
+  a.href = data;
+  a.download = `ournest-${photoId.slice(0, 6)}.jpg`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  toast('Saved — set it as your wallpaper from your Gallery 💙');
+}
+
+// ==== TOAST ==================================================================
 
 let toastTimer = null;
 function toast(msg) {
@@ -1232,9 +1989,7 @@ function toast(msg) {
   toastTimer = setTimeout(() => t.classList.remove('show'), 3200);
 }
 
-// -----------------------------------------------------------------------------
-// Actions (buttons with data-action)
-// -----------------------------------------------------------------------------
+// ==== ACTIONS (buttons with data-action) =====================================
 
 const byId = (list, id) => list.find((x) => x.id === id);
 
@@ -1247,8 +2002,28 @@ async function shareCode() {
   try { await navigator.clipboard.writeText(code); toast('Invite code copied'); } catch { toast(`Your code: ${code}`); }
 }
 
+function applyTheme() {
+  const dark = prefs.theme === 'dark' || (prefs.theme === 'auto' && window.matchMedia?.('(prefers-color-scheme: dark)').matches);
+  document.documentElement.dataset.theme = dark ? 'dark' : 'light';
+  $('meta[name=theme-color]')?.setAttribute('content', dark ? '#0E1626' : '#3B82F6');
+}
+
+function handleBootLink() {
+  if (bootHandled) return;
+  bootHandled = true;
+  const p = new URLSearchParams(location.search);
+  const tab = p.get('tab');
+  const action = p.get('action');
+  if (tab && (NAV.some(([t]) => t === tab) || tab === 'settings')) S.tab = tab;
+  if (action || tab) history.replaceState(null, '', location.pathname);
+  setTimeout(() => {
+    if (action === 'expense') openTxnEditor(null, 'expense');
+    if (action === 'snap') openStorySheet(null);
+  }, 400);
+}
+
 const actions = {
-  'tab': (el) => { S.tab = el.dataset.tab; window.scrollTo(0, 0); renderTab(); },
+  'tab': (el) => goTab(el.dataset.tab),
   'auth-mode': () => { S.authMode = S.authMode === 'signin' ? 'signup' : 'signin'; renderNow(); },
   'forgot': async () => {
     const email = $('[data-form=auth] input[name=email]')?.value.trim();
@@ -1259,26 +2034,32 @@ const actions = {
     if (!(await ask('Sign out?', 'Your data stays safe in your shared space.', 'Sign out'))) return;
     stopTracking();
     S.tab = 'home';
+    lastMsgTime = null;
     await signOut(auth);
   },
   'create-couple': () => createCouple(),
   'share-code': () => shareCode(),
-  'goto-bills': () => { S.tab = 'money'; S.moneyTab = 'bills'; S.who = 'all'; window.scrollTo(0, 0); renderTab(); },
+  'goto-bills': () => { S.moneyTab = 'bills'; S.who = 'all'; goTab('money'); },
+  'goto-overview': () => { S.moneyTab = 'overview'; S.month = firstOfMonth(new Date()); subscribeTxns(); goTab('money'); },
+  'fab': () => {
+    if (S.tab === 'plan') return openEventSheet(null, S.calDay);
+    ({
+      overview: () => openTxnEditor(null),
+      activity: () => openTxnEditor(null),
+      budgets: () => openBudgetSheet(null),
+      goals: () => openGoalSheet(null),
+      bills: () => openBillSheet(null),
+    })[S.moneyTab]();
+  },
 
   // money
-  'money-tab': (el) => { S.moneyTab = el.dataset.mtab; renderTab(); },
+  'money-tab': (el) => { S.moneyTab = el.dataset.mtab; if (S.tab !== 'money') goTab('money'); else renderTab(); },
   'who': (el) => { S.who = el.dataset.who; renderTab(); },
   'month': (el) => {
     S.month = new Date(S.month.getFullYear(), S.month.getMonth() + Number(el.dataset.delta), 1);
     subscribeTxns();
     renderTab();
   },
-  'money-add': () => ({
-    activity: () => openTxnEditor(null),
-    budgets: () => openBudgetSheet(null),
-    goals: () => openGoalSheet(null),
-    bills: () => openBillSheet(null),
-  })[S.moneyTab](),
   'new-txn': (el) => openTxnEditor(null, el.dataset.type),
   'edit-txn': (el) => { const x = byId(S.txns, el.dataset.id); if (x) openTxnEditor(x); },
   'txn-type': (el) => {
@@ -1320,23 +2101,82 @@ const actions = {
     toast('Added to expenses');
   },
 
-  // updates
-  'mood': (el) => {
-    S.mood = S.mood === el.dataset.mood ? '' : el.dataset.mood;
-    $$('.mood').forEach((b) => b.classList.toggle('on', b.dataset.mood === S.mood));
+  // plan
+  'plan-tab': (el) => { S.planTab = el.dataset.ptab; renderTab(); },
+  'cal-month': (el) => { S.calMonth = new Date(S.calMonth.getFullYear(), S.calMonth.getMonth() + Number(el.dataset.delta), 1); renderTab(); },
+  'cal-today': () => { S.calMonth = firstOfMonth(new Date()); S.calDay = startOfDay(new Date()); renderTab(); },
+  'pick-day': (el) => {
+    const d = parseDateTime(el.dataset.date, '00:00');
+    S.calDay = d;
+    if (!sameMonth(d, S.calMonth)) S.calMonth = firstOfMonth(d);
+    renderTab();
   },
-  'heart': (el) => {
-    const p = byId(S.posts, el.dataset.id);
-    if (!p) return;
-    patch('updates', p.id, { hearts: p.hearts.includes(uid()) ? arrayRemove(uid()) : arrayUnion(uid()) });
+  'open-day': (el) => {
+    const d = parseDateTime(el.dataset.date, '00:00');
+    S.calDay = d; S.calMonth = firstOfMonth(d); S.planTab = 'calendar';
+    goTab('plan');
   },
-  'del-post': async (el) => { if (await ask('Delete this update?', 'It will be removed for both of you.', 'Delete')) remove('updates', el.dataset.id); },
+  'new-event': () => openEventSheet(null, S.tab === 'plan' ? S.calDay : startOfDay(new Date())),
+  'edit-event': (el) => { const e = byId(S.events, el.dataset.id); if (e) openEventSheet(e); },
+  'toggle-event': (el) => patch('events', el.dataset.id, { done: el.checked }),
+  'event-done': (el) => {
+    patch('events', el.dataset.id, { done: true });
+    el.closest('.row')?.remove();
+    if (!$$('#modal [data-action=event-done]').length) closeSheet();
+  },
+  'snooze': (el) => {
+    patch('events', el.dataset.id, { snoozeUntil: Timestamp.fromDate(new Date(Date.now() + 3600000)), notifiedAt: null });
+    el.closest('.row')?.remove();
+    toast('Snoozed for 1 hour');
+    if (!$$('#modal [data-action=snooze]').length) closeSheet();
+  },
+  'delete-event': async (el) => { if (await ask('Delete this plan?', 'This removes it from the calendar.', 'Delete')) remove('events', el.dataset.id); },
 
   // lists
   'list-tab': (el) => { S.listName = el.dataset.list; renderTab(); },
   'toggle-item': (el) => patch('items', el.dataset.id, { done: el.checked }),
   'del-item': (el) => remove('items', el.dataset.id),
   'clear-done': () => S.items.filter((i) => i.done && (i.list || 'To-do') === S.listName).forEach((i) => remove('items', i.id)),
+
+  // moments
+  'mood': (el) => {
+    S.mood = S.mood === el.dataset.mood ? '' : el.dataset.mood;
+    $$('.mood').forEach((b) => b.classList.toggle('on', b.dataset.mood === S.mood));
+  },
+  'clear-post-photo': () => { S.postPhoto = null; $('#postPreview').innerHTML = ''; },
+  'heart': (el) => {
+    const p = byId(S.posts, el.dataset.id);
+    if (!p) return;
+    patch('updates', p.id, { hearts: p.hearts.includes(uid()) ? arrayRemove(uid()) : arrayUnion(uid()) });
+  },
+  'comments': (el) => openComments(el.dataset.id),
+  'del-post': async (el) => { if (await ask('Delete this post?', 'It will be removed for both of you.', 'Delete')) remove('updates', el.dataset.id); },
+  'new-story': () => openStorySheet(null),
+  'snap': () => $('#snapInput').click(),
+  'story-bg': (el) => {
+    storyDraft.bg = el.dataset.color;
+    const box = $('#textStory');
+    if (box) box.style.background = storyDraft.bg;
+    $$('[data-action=story-bg]').forEach((b) => b.classList.toggle('on', b === el));
+  },
+  'open-stories': (el) => openStories(el.dataset.owner),
+  'story-next': () => { storyState.i++; showStory(); },
+  'story-prev': () => { storyState.i = Math.max(0, storyState.i - 1); showStory(); },
+  'story-love': (el) => {
+    const s = byId(S.stories, el.dataset.id);
+    if (!s) return;
+    save('messages', { from: uid(), text: `❤️ Loved your story${s.text ? `: "${s.text.slice(0, 40)}"` : ''}`, createdAt: Timestamp.now(), seenBy: [] });
+    toast('Sent ❤️');
+  },
+  'del-story': async (el) => {
+    clearTimeout(storyTimer);
+    const id = el.dataset.id;
+    closeViewer();
+    if (await ask('Delete this story?', 'It will disappear for both of you.', 'Delete')) remove('stories', id);
+  },
+  'view-photo': (el) => openPhotoViewer(el.dataset.id),
+  'save-photo': (el) => savePhotoToDevice(el.dataset.id),
+  'close-viewer': () => closeViewer(),
 
   // map
   'focus': (el) => {
@@ -1350,7 +2190,7 @@ const actions = {
     if (pos) await pushPosition(pos);
     save('updates', {
       authorUid: uid(), text: el.dataset.label, mood: el.dataset.emoji, kind: 'checkin',
-      createdAt: Timestamp.now(), hearts: [],
+      createdAt: Timestamp.now(), hearts: [], comments: [],
       ...(pos ? { lat: pos.coords.latitude, lng: pos.coords.longitude } : {}),
     });
     toast(pos ? `Check-in sent to ${partnerName()} 💙` : 'Check-in sent (without location — GPS is off).');
@@ -1358,6 +2198,15 @@ const actions = {
 
   // settings
   'edit-name': () => openNameSheet(),
+  'set-theme': (el) => { prefs.theme = el.dataset.value; savePrefs(); applyTheme(); renderTab(); },
+  'set-home-money': (el) => { prefs.homeMoney = el.dataset.value; savePrefs(); renderTab(); },
+  'install': async () => {
+    if (!deferredInstall) return;
+    deferredInstall.prompt();
+    await deferredInstall.userChoice.catch(() => null);
+    deferredInstall = null;
+    renderTab();
+  },
 
   // sheets
   'close-modal': () => closeSheet(),
@@ -1365,9 +2214,7 @@ const actions = {
   'ask-no': () => closeSheet(),
 };
 
-// -----------------------------------------------------------------------------
-// Forms (data-form)
-// -----------------------------------------------------------------------------
+// ==== FORMS (data-form) ======================================================
 
 const forms = {
   'auth': async (form) => {
@@ -1450,14 +2297,83 @@ const forms = {
     save('bills', data, form.dataset.id || null);
     closeSheet();
   },
+  'event': (form) => {
+    const f = new FormData(form);
+    const title = String(f.get('title') || '').trim();
+    if (!title) return toast('Give your plan a name.');
+    const allDay = f.get('allDay') === 'on';
+    const date = parseDateTime(f.get('date'), allDay ? '00:00' : f.get('time'));
+    const existing = form.dataset.id ? byId(S.events, form.dataset.id) : null;
+    const remind = Number(f.get('remind'));
+    const data = {
+      title,
+      kind: f.get('kind'),
+      private: f.get('scope') === 'me',
+      date: Timestamp.fromDate(date),
+      allDay,
+      remind,
+      notes: String(f.get('notes') || '').trim(),
+      updatedAt: Timestamp.now(),
+      // Changing the time resets the reminder so it can fire again.
+      notifiedAt: null,
+      snoozeUntil: null,
+    };
+    if (!existing) Object.assign(data, { createdBy: uid(), done: false, createdAt: Timestamp.now() });
+    // Only the creator can make a plan "just me".
+    if (existing && !isMine(existing.createdBy)) data.private = false;
+    save('events', data, existing?.id || null);
+    closeSheet();
+    S.calDay = startOfDay(date);
+    S.calMonth = firstOfMonth(date);
+    toast(remind >= 0 ? 'Saved — we\'ll remind you 🔔' : 'Saved');
+    if (remind >= 0 && !prefs.notify && 'Notification' in window && Notification.permission === 'default') {
+      setTimeout(() => toast('Tip: turn on notifications in Settings to get alerts.'), 3400);
+    }
+  },
   'post': (form) => {
     const text = form.elements.text.value.trim();
-    if (!text && !S.mood) return;
-    save('updates', { authorUid: uid(), text, mood: S.mood, kind: 'post', createdAt: Timestamp.now(), hearts: [] });
+    if (!text && !S.mood && !S.postPhoto) return;
+    const photoId = S.postPhoto ? savePhoto(S.postPhoto) : null;
+    save('updates', {
+      authorUid: uid(), text, mood: S.mood, kind: 'post', createdAt: Timestamp.now(), hearts: [], comments: [],
+      ...(photoId ? { photoId } : {}),
+    });
     form.reset();
     S.mood = '';
+    S.postPhoto = null;
+    $('#postPreview').innerHTML = '';
     $$('.mood').forEach((b) => b.classList.remove('on'));
     form.elements.text.blur();
+  },
+  'comment': (form) => {
+    const text = form.elements.text.value.trim();
+    if (!text) return;
+    const id = form.dataset.id;
+    const c = { by: uid(), text, at: Date.now() };
+    const p = byId(S.posts, id);
+    if (p) p.comments = [...p.comments, c];
+    patch('updates', id, { comments: arrayUnion(c) });
+    openComments(id);
+  },
+  'story': (form) => {
+    const text = form.elements.text.value.trim();
+    if (!storyDraft.photo && !text) return toast('Add a photo or type a message.');
+    const photoId = storyDraft.photo ? savePhoto(storyDraft.photo) : null;
+    save('stories', {
+      authorUid: uid(), text, bg: storyDraft.bg, createdAt: Timestamp.now(), seenBy: [],
+      ...(photoId ? { photoId } : {}),
+    });
+    storyDraft.photo = null;
+    closeSheet();
+    toast(hasPartner() ? `Shared with ${partnerName()} 💙` : 'Shared 💙');
+  },
+  'chat': (form) => {
+    const text = form.elements.text.value.trim();
+    if (!text) return;
+    save('messages', { from: uid(), text, createdAt: Timestamp.now(), seenBy: [] });
+    form.reset();
+    form.elements.text.style.height = '';
+    requestAnimationFrame(() => window.scrollTo(0, document.body.scrollHeight));
   },
   'item': (form) => {
     const text = form.elements.text.value.trim();
@@ -1475,22 +2391,44 @@ const forms = {
   },
 };
 
-// -----------------------------------------------------------------------------
-// Change events (data-change)
-// -----------------------------------------------------------------------------
+// ==== CHANGE EVENTS (data-change) ============================================
 
 const changes = {
   'sharing': (el) => setSharing(el.checked),
+  'notify': (el) => enableNotifications(el.checked),
   'anniv': (el) => {
     const v = el.value;
     updateDoc(doc(db, 'couples', S.couple.id), { anniversary: v ? Timestamp.fromDate(parseDateInput(v)) : null }).catch(warn);
   },
   'currency': (el) => updateDoc(doc(db, 'couples', S.couple.id), { currency: el.value }).catch(warn),
+  'allday': (el) => { const tf = $('#timeField'); if (tf) tf.hidden = el.checked; },
+  'post-photo': async (el) => {
+    const data = await pickPhoto(el.files[0]);
+    el.value = '';
+    if (!data) return;
+    S.postPhoto = data;
+    $('#postPreview').innerHTML = postPreviewHtml();
+  },
+  'chat-photo': async (el) => {
+    const data = await pickPhoto(el.files[0]);
+    el.value = '';
+    if (!data) return;
+    const photoId = savePhoto(data);
+    save('messages', { from: uid(), text: '', photoId, createdAt: Timestamp.now(), seenBy: [] });
+    requestAnimationFrame(() => window.scrollTo(0, document.body.scrollHeight));
+  },
+  'story-photo': async (el) => {
+    const data = await pickPhoto(el.files[0]);
+    el.value = '';
+    if (!data) return;
+    const text = $('#modal input[name=text]')?.value || '';
+    openStorySheet(data);
+    const input = $('#modal input[name=text]');
+    if (input) input.value = text;
+  },
 };
 
-// -----------------------------------------------------------------------------
-// Wiring
-// -----------------------------------------------------------------------------
+// ==== WIRING =================================================================
 
 document.addEventListener('click', (e) => {
   const el = e.target.closest('[data-action]');
@@ -1514,13 +2452,35 @@ document.addEventListener('change', (e) => {
   if (el) changes[el.dataset.change]?.(el, e);
 });
 
-// Send post with Enter (Shift+Enter for new line)
+document.addEventListener('input', (e) => {
+  // Live preview text for text stories; grow the chat box as you type.
+  if (e.target.matches('[data-input=story-text]') && !storyDraft.photo) {
+    const box = $('#textStory');
+    if (box) box.textContent = e.target.value || 'Aa';
+  }
+  if (e.target.matches('.chat-bar textarea')) {
+    e.target.style.height = 'auto';
+    e.target.style.height = `${Math.min(e.target.scrollHeight, 120)}px`;
+  }
+});
+
+// Enter sends (Shift+Enter = new line) in post and chat boxes.
 document.addEventListener('keydown', (e) => {
-  if (e.key === 'Enter' && !e.shiftKey && e.target.matches('[data-form=post] textarea')) {
+  if (e.key === 'Enter' && !e.shiftKey && e.target.matches('[data-form=post] textarea, [data-form=chat] textarea')) {
     e.preventDefault();
     e.target.form.requestSubmit();
   }
-  if (e.key === 'Escape' && !$('#modal').hidden) closeSheet();
+  if (e.key === 'Escape') {
+    if (!$('#viewer').hidden) closeViewer();
+    else if (!$('#modal').hidden) closeSheet();
+  }
+});
+
+// Home "Snap" button → camera → share as a moment.
+$('#snapInput').addEventListener('change', async (e) => {
+  const data = await pickPhoto(e.target.files[0]);
+  e.target.value = '';
+  if (data) openStorySheet(data);
 });
 
 function updateOnline() { $('#offline').hidden = navigator.onLine; }
@@ -1528,10 +2488,24 @@ window.addEventListener('online', updateOnline);
 window.addEventListener('offline', updateOnline);
 updateOnline();
 
-// Refresh "x min ago" labels every minute
-setInterval(() => { if (screenName() === 'app' && ['home', 'map', 'updates'].includes(S.tab)) render(); }, 60000);
+window.matchMedia?.('(prefers-color-scheme: dark)').addEventListener?.('change', () => { if (prefs.theme === 'auto') applyTheme(); });
+applyTheme();
 
-// Install as an app + offline support
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) { checkReminders(); if (S.tab === 'chat') markChatSeen(); render(); }
+});
+
+// Check reminders every 30 seconds; refresh "x min ago" labels every minute.
+setInterval(checkReminders, 30000);
+setInterval(() => { if (screenName() === 'app' && ['home', 'map', 'chat'].includes(S.tab)) render(); }, 60000);
+
+window.addEventListener('beforeinstallprompt', (e) => {
+  e.preventDefault();
+  deferredInstall = e;
+  if (S.tab === 'settings') render();
+});
+
+// Install as an app + offline support + notifications
 if ('serviceWorker' in navigator && location.protocol !== 'file:') {
   navigator.serviceWorker.register('./sw.js').catch(warn);
 }
