@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>OurNest</title>
+  <meta name="description" content="Money, places and little updates — together.">
+  <meta name="theme-color" content="#3B82F6">
+
+  <!-- Install as an app -->
+  <link rel="manifest" href="./manifest.webmanifest">
+  <link rel="icon" href="./icons/icon-192.png">
+  <link rel="apple-touch-icon" href="./icons/icon-192.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="OurNest">
+
+  <!-- Map library (OpenStreetMap, no API key needed) -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" defer></script>
+
+  <link rel="stylesheet" href="./styles.css">
+  <script type="module" src="./app.js"></script>
+</head>
+<body>
+  <div id="offline" hidden>☁️ You're offline. Everything you add is saved and will sync when you're back online.</div>
+  <div id="root"></div>
+  <div id="modal" hidden></div>
+  <div id="toast"></div>
+  <noscript>Please turn on JavaScript to use OurNest.</noscript>
+</body>
+</html>
